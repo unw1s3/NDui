@@ -9,14 +9,15 @@ info.guildTable = {}
 local r, g, b = DB.r, DB.g, DB.b
 local infoFrame, gName, gOnline, gRank, prevTime
 
-local wipe, sort, format, select = table.wipe, table.sort, format, select
+local wipe, sort, format = table.wipe, table.sort, format
 local SELECTED_DOCK_FRAME = SELECTED_DOCK_FRAME
 local LEVEL_ABBR, CLASS_ABBR, NAME, ZONE, RANK, REMOTE_CHAT = LEVEL_ABBR, CLASS_ABBR, NAME, ZONE, RANK, REMOTE_CHAT
-local IsAltKeyDown, IsShiftKeyDown, C_Timer_After, GetTime, Ambiguate, MouseIsOver = IsAltKeyDown, IsShiftKeyDown, C_Timer.After, GetTime, Ambiguate, MouseIsOver
+local IsAltKeyDown, IsShiftKeyDown, C_Timer_After, GetTime, Ambiguate = IsAltKeyDown, IsShiftKeyDown, C_Timer.After, GetTime, Ambiguate
 local MailFrame, MailFrameTab_OnClick, SendMailNameEditBox = MailFrame, MailFrameTab_OnClick, SendMailNameEditBox
 local ChatEdit_ChooseBoxForSend, ChatEdit_ActivateChat, ChatFrame_OpenChat, ChatFrame_GetMobileEmbeddedTexture = ChatEdit_ChooseBoxForSend, ChatEdit_ActivateChat, ChatFrame_OpenChat, ChatFrame_GetMobileEmbeddedTexture
 local GetNumGuildMembers, GetGuildInfo, GetGuildRosterInfo, IsInGuild = GetNumGuildMembers, GetGuildInfo, GetGuildRosterInfo, IsInGuild
-local GetQuestDifficultyColor, GetRealZoneText, UnitInRaid, UnitInParty = GetQuestDifficultyColor, GetRealZoneText, UnitInRaid, UnitInParty
+local GetQuestDifficultyColor, UnitInRaid, UnitInParty = GetQuestDifficultyColor, UnitInRaid, UnitInParty
+local ShouldUnitIdentityBeSecret = C_Secrets.ShouldUnitIdentityBeSecret
 local HybridScrollFrame_GetOffset, HybridScrollFrame_Update = HybridScrollFrame_GetOffset, HybridScrollFrame_Update
 local C_GuildInfo_GuildRoster = C_GuildInfo.GuildRoster
 local InviteToGroup = C_PartyInfo.InviteUnit
@@ -80,15 +81,19 @@ function info:GuildPanel_UpdateButton(button)
 
 	B.ClassIconTexCoord(button.class, class)
 
-	local namecolor = B.HexRGB(B.ClassColor(class))
+	local namecolor = B.ClassColorString(class)
 	local isTimerunning = guid and C_ChatInfo.IsTimerunningPlayer(guid)
 	local playerName = isTimerunning and TimerunningUtil.AddSmallIcon(name) or name
 	button.name:SetText(namecolor..playerName..status)
 
 	local zonecolor = DB.GreyColor
-	if UnitInRaid(name) or UnitInParty(name) then
+	local isGrouped = UnitInParty(name)
+	if not isGrouped and not ShouldUnitIdentityBeSecret(name) then
+		isGrouped = UnitInRaid(name)
+	end
+	if isGrouped then
 		zonecolor = DB.InfoColor
-	elseif GetRealZoneText() == zone then
+	elseif GetAreaText() == zone then
 		zonecolor = "|cff4cff4c"
 	end
 	button.zone:SetText(zonecolor..zone)
@@ -347,7 +352,7 @@ info.onEnter = function()
 end
 
 local function delayLeave()
-	if MouseIsOver(infoFrame) then return end
+	if infoFrame:IsMouseOver() then return end
 	infoFrame:Hide()
 end
 
@@ -357,10 +362,10 @@ info.onLeave = function()
 end
 
 info.onMouseUp = function()
-	--if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
+	if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
 
 	if not IsInGuild() then return end
 	infoFrame:Hide()
-	if not CommunitiesFrame then LoadAddOn("Blizzard_Communities") end
+	if not CommunitiesFrame then C_AddOns.LoadAddOn("Blizzard_Communities") end
 	if CommunitiesFrame then ToggleFrame(CommunitiesFrame) end
 end

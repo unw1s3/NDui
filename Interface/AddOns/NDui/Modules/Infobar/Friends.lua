@@ -5,13 +5,14 @@ if not C.Infobar.Friends then return end
 local module = B:GetModule("Infobar")
 local info = module:RegisterInfobar("Friend", C.Infobar.FriendsPos)
 
-local strfind, format, sort, wipe, unpack, tinsert = string.find, string.format, table.sort, table.wipe, unpack, table.insert
+local format, sort, wipe, unpack, tinsert = string.format, table.sort, table.wipe, unpack, table.insert
 local C_Timer_After = C_Timer.After
 local C_FriendList_GetNumFriends = C_FriendList.GetNumFriends
 local C_FriendList_GetNumOnlineFriends = C_FriendList.GetNumOnlineFriends
 local C_FriendList_GetFriendInfoByIndex = C_FriendList.GetFriendInfoByIndex
-local BNet_GetClientEmbeddedAtlas, BNet_GetBattlenetClientAtlas, FriendsFrame_GetFormattedCharacterName = BNet_GetClientEmbeddedAtlas, BNet_GetBattlenetClientAtlas, FriendsFrame_GetFormattedCharacterName
-local BNGetNumFriends, GetRealZoneText, GetQuestDifficultyColor = BNGetNumFriends, GetRealZoneText, GetQuestDifficultyColor
+local C_FriendList_IsLegacyFriendSystemEnabled = C_FriendList.IsLegacyFriendSystemEnabled
+local FriendsFrame_GetFormattedCharacterName = FriendsFrame_GetFormattedCharacterName
+local BNGetNumFriends, GetQuestDifficultyColor = BNGetNumFriends, GetQuestDifficultyColor
 local HybridScrollFrame_GetOffset, HybridScrollFrame_Update = HybridScrollFrame_GetOffset, HybridScrollFrame_Update
 local C_BattleNet_GetFriendAccountInfo = C_BattleNet.GetFriendAccountInfo
 local C_BattleNet_GetFriendNumGameAccounts = C_BattleNet.GetFriendNumGameAccounts
@@ -24,8 +25,21 @@ local RAF_RECRUIT_FRIEND, RAF_RECRUITER_FRIEND = RAF_RECRUIT_FRIEND, RAF_RECRUIT
 local EXPANSION_NAME0, EXPANSION_NAME3 = EXPANSION_NAME0, EXPANSION_NAME3
 local WOW_PROJECT_ID = WOW_PROJECT_ID or 1
 local WOW_PROJECT_60 = WOW_PROJECT_CLASSIC or 2
+local WOW_PROJECT_BCC = WOW_PROJECT_BURNING_CRUSADE_CLASSIC or 5
+local WOW_PROJECT_WLK = WOW_PROJECT_WRATH_CLASSIC or 11
 local WOW_PROJECT_CATA = WOW_PROJECT_CATACLYSM_CLASSIC or 14
+local WOW_PROJECT_MOP = WOW_PROJECT_MISTS_CLASSIC or 19
+local WOW_PROJECT_FOREVER = WOW_PROJECT_CAMELOT or 18
 local CLIENT_WOW_DIFF = "WoV" -- for sorting
+
+local PROJECTID_TO_EXPANSION = {
+	[WOW_PROJECT_60] = EXPANSION_NAME0,
+	[WOW_PROJECT_BCC] = EXPANSION_NAME1,
+	[WOW_PROJECT_WLK] = EXPANSION_NAME2,
+	[WOW_PROJECT_CATA] = EXPANSION_NAME3,
+	[WOW_PROJECT_MOP] = EXPANSION_NAME4,
+	[WOW_PROJECT_FOREVER] = L["WoW Forever"],
+}
 
 local r, g, b = DB.r, DB.g, DB.b
 local infoFrame, updateRequest, prevTime
@@ -33,8 +47,6 @@ local friendTable, bnetTable = {}, {}
 local activeZone, inactiveZone = "|cff4cff4c", DB.GreyColor
 local noteString = "|T"..DB.copyTex..":12|t %s"
 local broadcastString = "|TInterface\\FriendsFrame\\BroadcastIcon:12|t %s (%s)"
-local onlineString = gsub(ERR_FRIEND_ONLINE_SS, ".+h", "")
-local offlineString = gsub(ERR_FRIEND_OFFLINE_S, "%%s", "")
 
 local menuList = {
 	[1] = {text = L["Join or Invite"], isTitle = true, notCheckable = true}
@@ -135,11 +147,7 @@ local function buildBNetTable(num)
 					status = FRIENDS_TEXTURE_DND
 				end
 
-				if wowProjectID == WOW_PROJECT_60 then
-					gameText = EXPANSION_NAME0
-				elseif wowProjectID == WOW_PROJECT_CATA then
-					gameText = EXPANSION_NAME3
-				end
+				gameText = PROJECTID_TO_EXPANSION[wowProjectID] or gameText
 
 				local infoText = GetOnlineInfoText(client, isMobile, rafLinkType, gameText)
 				if client == BNET_CLIENT_WOW and wowProjectID == WOW_PROJECT_ID then
@@ -254,7 +262,7 @@ local function GetButtonTexFromInviteType(guid, factionName)
 end
 
 local function GetNameAndInviteType(class, charName, guid, factionName)
-	return format("%s%s|r %s", B.HexRGB(B.ClassColor(DB.ClassList[class])), charName, GetButtonTexFromInviteType(guid, factionName))
+	return format("%s%s|r %s", B.ClassColorString(DB.ClassList[class]), charName, GetButtonTexFromInviteType(guid, factionName))
 end
 
 local function buttonOnClick(self, btn)
@@ -316,9 +324,9 @@ local function buttonOnClick(self, btn)
 		end
 	else
 		if self.isBNet then
-			ChatFrame_SendBNetTell(self.data[2])
+			ChatFrameUtil.SendBNetTell(self.data[2])
 		else
-			ChatFrame_SendTell(self.data[1], SELECTED_DOCK_FRAME)
+			ChatFrameUtil.SendTell(self.data[1], SELECTED_DOCK_FRAME)
 		end
 	end
 end
@@ -344,7 +352,7 @@ local function buttonOnEnter(self)
 			local level = gameAccountInfo.characterLevel
 			local gameText = gameAccountInfo.richPresence or ""
 			local wowProjectID = gameAccountInfo.wowProjectID
-			local clientString = BNet_GetClientEmbeddedAtlas(client, 16)
+			local clientString = ""
 			local timerunningSeasonID = gameAccountInfo.timerunningSeasonID
 			if client == BNET_CLIENT_WOW then
 				if charName ~= "" then -- fix for weird account
@@ -362,7 +370,7 @@ local function buttonOnEnter(self)
 					end
 
 					class = DB.ClassList[class]
-					local classColor = B.HexRGB(B.ClassColor(class))
+					local classColor = B.ClassColorString(class)
 					if faction == "Horde" then
 						clientString = "|TInterface\\FriendsFrame\\PlusManz-Horde:16:|t"
 					elseif faction == "Alliance" then
@@ -374,6 +382,13 @@ local function buttonOnEnter(self)
 					GameTooltip:AddLine(format("%s%s", inactiveZone, zoneName))
 				end
 			else
+				if C_Texture.IsTitleIconTextureReady(client, Enum.TitleIconVersion.Small) then
+					C_Texture.GetTitleIconTexture(client, Enum.TitleIconVersion.Small, function(success, texture)
+						if success then
+							clientString = BNet_GetClientEmbeddedTexture(texture, 32, 32, 0)
+						end
+					end)
+				end
 				GameTooltip:AddLine(format("|cffffffff%s%s", clientString, accountName))
 				if gameText ~= "" then
 					GameTooltip:AddLine(format("%s%s", inactiveZone, gameText))
@@ -394,7 +409,7 @@ local function buttonOnEnter(self)
 		GameTooltip:AddLine(L["WoW"], 1,.8,0)
 		GameTooltip:AddLine(" ")
 		local name, level, class, area, _, note = unpack(self.data)
-		local classColor = B.HexRGB(B.ClassColor(class))
+		local classColor = B.ClassColorString(class)
 		GameTooltip:AddLine(format("%s %s%s", level, classColor, name))
 		GameTooltip:AddLine(format("%s%s", inactiveZone, area))
 
@@ -448,13 +463,12 @@ function info:FriendsPanel_UpdateButton(button)
 	if index <= onlineFriends then
 		local name, level, class, area, status = unpack(friendTable[index])
 		button.status:SetTexture(status)
-		local zoneColor = GetRealZoneText() == area and activeZone or inactiveZone
+		local zoneColor = GetAreaText() == area and activeZone or inactiveZone
 		local levelColor = B.HexRGB(GetQuestDifficultyColor(level))
-		local classColor = DB.ClassColors[class] or levelColor
+		local classColor = class and C_ClassColor.GetClassColor(class) or GetQuestDifficultyColor(level)
 		button.name:SetText(format("%s%s|r %s%s", levelColor, level, B.HexRGB(classColor), name))
 		button.zone:SetText(format("%s%s", zoneColor, area))
 		C_Texture.SetTitleIconTexture(button.gameIcon, BNET_CLIENT_WOW, Enum.TitleIconVersion.Medium)
-		--button.gameIcon:SetAtlas(BNet_GetBattlenetClientAtlas(BNET_CLIENT_WOW))
 
 		button.isBNet = nil
 		button.data = friendTable[index]
@@ -466,21 +480,19 @@ function info:FriendsPanel_UpdateButton(button)
 		local zoneColor = inactiveZone
 		local name = inactiveZone..charName
 		if client == BNET_CLIENT_WOW then
-			local color = DB.ClassColors[class] or GetQuestDifficultyColor(1)
+			local color = class and C_ClassColor.GetClassColor(class) or GetQuestDifficultyColor(1)
 			name = B.HexRGB(color)..charName
-			zoneColor = GetRealZoneText() == infoText and activeZone or inactiveZone
+			zoneColor = GetAreaText() == infoText and activeZone or inactiveZone
 		end
 		button.name:SetText(format("%s%s|r (%s|r)", DB.InfoColor, accountName, name))
 		button.zone:SetText(format("%s%s", zoneColor, infoText))
 
 		if client == CLIENT_WOW_DIFF then
 			C_Texture.SetTitleIconTexture(button.gameIcon, BNET_CLIENT_WOW, Enum.TitleIconVersion.Medium)
-			--button.gameIcon:SetAtlas(BNet_GetBattlenetClientAtlas(BNET_CLIENT_WOW))
 		elseif client == BNET_CLIENT_WOW then
 			button.gameIcon:SetTexture("Interface\\FriendsFrame\\PlusManz-"..factionName)
 		else
 			C_Texture.SetTitleIconTexture(button.gameIcon, client, Enum.TitleIconVersion.Medium)
-			--button.gameIcon:SetAtlas(BNet_GetBattlenetClientAtlas(client))
 		end
 
 		button.isBNet = true
@@ -524,8 +536,11 @@ function info:FriendsPanel_OnMouseWheel(delta)
 end
 
 function info:FriendsPanel_Refresh()
-	local numFriends = C_FriendList_GetNumFriends()
-	local onlineFriends = C_FriendList_GetNumOnlineFriends()
+	local numFriends, onlineFriends = 0, 0
+	if not C_FriendList_IsLegacyFriendSystemEnabled or C_FriendList_IsLegacyFriendSystemEnabled() then
+		numFriends = C_FriendList_GetNumFriends()
+		onlineFriends = C_FriendList_GetNumOnlineFriends()
+	end
 	local numBNet, onlineBNet = BNGetNumFriends()
 	local totalOnline = onlineFriends + onlineBNet
 	local totalFriends = numFriends + numBNet
@@ -544,14 +559,12 @@ info.eventList = {
 	"BN_FRIEND_INFO_CHANGED",
 	"FRIENDLIST_UPDATE",
 	"PLAYER_ENTERING_WORLD",
-	"CHAT_MSG_SYSTEM",
 }
+if C_FriendList_IsLegacyFriendSystemEnabled then
+	tinsert(info.eventList, "LEGACY_FRIEND_SYSTEM_STATUS_UPDATED")
+end
 
-info.onEvent = function(self, event, arg1)
-	if event == "CHAT_MSG_SYSTEM" then
-		if not strfind(arg1, onlineString) and not strfind(arg1, offlineString) then return end
-	end
-
+info.onEvent = function(self)
 	info:FriendsPanel_Refresh()
 	self.text:SetText(format("%s: "..DB.MyColor.."%d", FRIENDS, info.totalOnline))
 
@@ -600,7 +613,7 @@ info.onEnter = function(self)
 end
 
 local function delayLeave()
-	if MouseIsOver(infoFrame) then return end
+	if infoFrame:IsMouseOver() then return end
 	infoFrame:Hide()
 end
 
@@ -611,7 +624,7 @@ info.onLeave = function()
 end
 
 info.onMouseUp = function(_, btn)
-	--if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
+	if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
 
 	if btn ~= "LeftButton" then return end
 	if infoFrame then infoFrame:Hide() end

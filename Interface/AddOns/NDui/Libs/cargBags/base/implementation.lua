@@ -48,7 +48,7 @@ function Implementation:New(name)
 	if(self.instances[name]) then return error(("cargBags: Implementation '%s' already exists!"):format(name)) end
 	if(_G[name]) then return error(("cargBags: Global '%s' for Implementation is already used!"):format(name)) end
 
-	local impl = setmetatable(CreateFrame("Button", name, UIParent), self.__index)
+	local impl = setmetatable(CreateFrame("Frame", name, UIParent), self.__index)
 	impl.name = name
 
 	impl:SetAllPoints()
@@ -259,7 +259,6 @@ function Implementation:Init()
 	self:RegisterEvent("BAG_UPDATE_COOLDOWN", self, self.BAG_UPDATE_COOLDOWN)
 	self:RegisterEvent("ITEM_LOCK_CHANGED", self, self.ITEM_LOCK_CHANGED)
 	self:RegisterEvent("PLAYERBANKSLOTS_CHANGED", self, self.PLAYERBANKSLOTS_CHANGED)
-	self:RegisterEvent("PLAYERREAGENTBANKSLOTS_CHANGED", self, self.PLAYERREAGENTBANKSLOTS_CHANGED)
 	self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", self, self.UNIT_QUEST_LOG_CHANGED)
 	self:RegisterEvent("BAG_CLOSED", self, self.BAG_CLOSED)
 end
@@ -301,13 +300,13 @@ local defaultItem = cargBags:NewItemTable()
 	@param i <table> [optional]
 	@return i <table>
 ]]
-local iLvlClassIDs = {
+DB.iLvlClassIDs = {
 	[Enum.ItemClass.Gem] = Enum.ItemGemSubclass.Artifactrelic,
 	[Enum.ItemClass.Armor] = 0,
 	[Enum.ItemClass.Weapon] = 0,
 }
 local function isItemHasLevel(item)
-	local index = iLvlClassIDs[item.classID]
+	local index = DB.iLvlClassIDs[item.classID]
 	return index and (index == 0 or index == item.subClassID)
 end
 
@@ -318,19 +317,18 @@ function Implementation:GetItemInfo(bagID, slotID, i)
 	i.bagId = bagID
 	i.slotId = slotID
 
-	local texture, count, locked, quality, itemLink, noValue, itemID
 	local info = C_Container.GetContainerItemInfo(bagID, slotID)
 	if info then
 		i.texture, i.count, i.locked, i.quality, i.link, i.id, i.hasPrice = info.iconFileID, info.stackCount, info.isLocked, (info.quality or 1), info.hyperlink, info.itemID, (not info.hasNoValue)
 
-		--i.isInSet, i.setName = C_Container.GetContainerItemEquipmentSetInfo(bagID, slotID)
+		i.isInSet, i.setName = C_Container.GetContainerItemEquipmentSetInfo(bagID, slotID)
 
 		i.cdStart, i.cdFinish, i.cdEnable = C_Container.GetContainerItemCooldown(bagID, slotID)
 
 		local questInfo = C_Container.GetContainerItemQuestInfo(bagID, slotID)
 		i.isQuestItem, i.questID, i.questActive = questInfo.isQuestItem, questInfo.questID, questInfo.isActive
 
-		i.name, _, _, _, _, i.type, i.subType, _, i.equipLoc, _, _, i.classID, i.subClassID = C_Item.GetItemInfo(i.link)
+		i.name, _, _, _, _, i.type, i.subType, _, i.equipLoc, _, _, i.classID, i.subClassID, _, i.expacID = C_Item.GetItemInfo(i.link)
 		i.equipLoc = _G[i.equipLoc] -- INVTYPE to localized string
 
 		if isItemHasLevel(i) then
@@ -418,18 +416,36 @@ end
 	@param slotID <number> [optional]
 	@callback Container:OnBagUpdate(bagID, slotID)
 ]]
+local isUpdating = false
+
 function Implementation:BAG_UPDATE(_, bagID, slotID)
 	if self.isSorting then return end
+	if isUpdating then return end
+	isUpdating = true
 
-	if(bagID and slotID) then
+	if bagID and slotID then
 		self:UpdateSlot(bagID, slotID)
-	elseif(bagID) then
+	elseif bagID then
 		self:UpdateBag(bagID)
 	else
-		for bagID = -3, 17 do
+		for bagID = 0, 5 do
 			self:UpdateBag(bagID)
 		end
+
+		local bankType = self:AtBank() and BankFrame.BankPanel.bankType
+
+		if bankType == Enum.BankType.Character then
+			for _, bagID in ipairs(cargBags.BagStrings.bank) do
+				self:UpdateBag(bagID)
+			end
+		elseif bankType == Enum.BankType.Account then
+			for _, bagID in ipairs(cargBags.BagStrings.accountbank) do
+				self:UpdateBag(bagID)
+			end
+		end
 	end
+
+	isUpdating = false
 end
 
 --[[!
@@ -486,24 +502,6 @@ end
 	@param slotID <number> [optional]
 ]]
 function Implementation:PLAYERBANKSLOTS_CHANGED(event, bagID, slotID)
-	if(bagID <= NUM_BANKGENERIC_SLOTS) then
-		slotID = bagID
-		bagID = -1
-	else
-		bagID = bagID - NUM_BANKGENERIC_SLOTS
-	end
-
-	self:BAG_UPDATE(event, bagID, slotID)
-end
-
---[[!
-	Fired when reagent bank slots need to be updated
-	@param bagID <number>
-	@param slotID <number> [optional]
-]]
-function Implementation:PLAYERREAGENTBANKSLOTS_CHANGED(event, slotID)
-	local bagID = -3
-
 	self:BAG_UPDATE(event, bagID, slotID)
 end
 

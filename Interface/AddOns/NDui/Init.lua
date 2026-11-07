@@ -18,9 +18,9 @@ local host = CreateFrame("Frame")
 host:SetScript("OnEvent", function(_, event, ...)
 	for func in pairs(events[event]) do
 		if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-			func(event, CombatLogGetCurrentEventInfo())
+			xpcall(func, geterrorhandler(), event, CombatLogGetCurrentEventInfo())
 		else
-			func(event, ...)
+			xpcall(func, geterrorhandler(), event, ...)
 		end
 	end
 end)
@@ -122,7 +122,6 @@ B:RegisterEvent("PLAYER_LOGIN", function()
 	SetCVar("ActionButtonUseKeyDown", 1)
 	B:SetupUIScale()
 	B:RegisterEvent("UI_SCALE_CHANGED", UpdatePixelScale)
-	B:SetSmoothingAmount(NDuiADB["SmoothAmount"])
 	C.margin = 3
 
 	local LCG = LibStub("LibCustomGlow-1.0-NDui")
@@ -133,7 +132,7 @@ B:RegisterEvent("PLAYER_LOGIN", function()
 
 	for _, module in next, initQueue do
 		if module.OnLogin then
-			module:OnLogin()
+			xpcall(module.OnLogin, geterrorhandler(), module)
 		else
 			print("Module <"..module.name.."> does not loaded.")
 		end

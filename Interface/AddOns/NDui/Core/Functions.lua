@@ -7,35 +7,55 @@ local type, pairs, tonumber, wipe, next, select, unpack = type, pairs, tonumber,
 local strmatch, gmatch, strfind, format, gsub = string.match, string.gmatch, string.find, string.format, string.gsub
 local min, max, floor, rad = math.min, math.max, math.floor, math.rad
 local CreateColor = CreateColor
+local issecretvalue, issecrettable = issecretvalue, issecrettable
+
+-- Secret
+do
+	function B:IsSecretValue(value)
+		return issecretvalue and issecretvalue(value)
+	end
+
+	function B:NotSecretValue(value)
+		return not issecretvalue or not issecretvalue(value)
+	end
+
+	function B:IsSecretTable(object)
+		return issecrettable and issecrettable(object)
+	end
+
+	function B:NotSecretTable(object)
+		return not issecrettable or not issecrettable(object)
+	end
+
+	function B:SendChatMessage(...)
+		if C_ChatInfo.InChatMessagingLockdown() then return end
+		return C_ChatInfo.SendChatMessage(...)
+	end
+end
 
 -- Math
 do
+	B.NUMBER_ABBR_OPTIONS = {
+		[1] = { config = CreateAbbreviateConfig({
+				{ breakpoint = 1e12, abbreviation = "t", significandDivisor = 1e10, fractionDivisor = 1e2, abbreviationIsGlobal = false },
+				{ breakpoint = 1e9, abbreviation = "b", significandDivisor = 1e7, fractionDivisor = 1e2, abbreviationIsGlobal = false },
+				{ breakpoint = 1e6, abbreviation = "m", significandDivisor = 1e4, fractionDivisor = 1e2, abbreviationIsGlobal = false },
+				{ breakpoint = 1e3, abbreviation = "k", significandDivisor = 1e2, fractionDivisor = 1e1, abbreviationIsGlobal = false },
+		})},
+		[2] = { config = CreateAbbreviateConfig({
+				{ breakpoint = 1e12, abbreviation = L["NumberCap3"], significandDivisor = 1e10, fractionDivisor = 1e2, abbreviationIsGlobal = false },
+				{ breakpoint = 1e8, abbreviation = L["NumberCap2"], significandDivisor = 1e6, fractionDivisor = 1e2, abbreviationIsGlobal = false },
+				{ breakpoint = 1e4, abbreviation = L["NumberCap1"], significandDivisor = 1e3, fractionDivisor = 1e1, abbreviationIsGlobal = false },
+		})},
+	}
+
 	-- Numberize
 	function B.Numb(n)
-		if NDuiADB["NumberFormat"] == 1 then
-			if n >= 1e12 then
-				return format("%.2ft", n / 1e12)
-			elseif n >= 1e9 then
-				return format("%.2fb", n / 1e9)
-			elseif n >= 1e6 then
-				return format("%.2fm", n / 1e6)
-			elseif n >= 1e3 then
-				return format("%.1fk", n / 1e3)
-			else
-				return format("%.0f", n)
-			end
-		elseif NDuiADB["NumberFormat"] == 2 then
-			if n >= 1e12 then
-				return format("%.2f"..L["NumberCap3"], n / 1e12)
-			elseif n >= 1e8 then
-				return format("%.2f"..L["NumberCap2"], n / 1e8)
-			elseif n >= 1e4 then
-				return format("%.1f"..L["NumberCap1"], n / 1e4)
-			else
-				return format("%.0f", n)
-			end
+		local options = B.NUMBER_ABBR_OPTIONS[NDuiADB["NumberFormat"]]
+		if options then
+			return AbbreviateNumbers(n, options)
 		else
-			return format("%.0f", n)
+			return n
 		end
 	end
 
@@ -93,6 +113,7 @@ do
 
 	-- GUID to npcID
 	function B.GetNPCID(guid)
+		if B:IsSecretValue(guid) then return end
 		local id = tonumber(strmatch((guid or ""), "%-(%d-)%-%x-$"))
 		return id
 	end
@@ -137,16 +158,21 @@ do
 	function B.HexRGB(r, g, b)
 		if r then
 			if type(r) == "table" then
-				if r.r then r, g, b = r.r, r.g, r.b else r, g, b = unpack(r) end
+				return "|c"..C_ColorUtil.GenerateTextColorCode(r)
 			end
 			return format("|cff%02x%02x%02x", r*255, g*255, b*255)
 		end
 	end
 
 	function B.ClassColor(class)
-		local color = DB.ClassColors[class]
+		local color = class and C_ClassColor.GetClassColor(class)
 		if not color then return 1, 1, 1 end
-		return color.r, color.g, color.b
+		return color:GetRGB()
+	end
+
+	function B.ClassColorString(class)
+		local color = class and C_ClassColor.GetClassColor(class)
+		return color and color:GenerateHexColorMarkup() or "|cffffffff"
 	end
 
 	function B.UnitColor(unit)
@@ -160,30 +186,85 @@ do
 			r, g, b = .6, .6, .6
 		else
 			local reaction = UnitReaction(unit, "player")
-			if reaction then
+			if type(reaction) ~= "nil" then
 				local color = FACTION_BAR_COLORS[reaction]
 				r, g, b = color.r, color.g, color.b
 			end
 		end
 		return r, g, b
 	end
+
+	function B.UnitColorString(unit)
+		if UnitIsPlayer(unit) or UnitInPartyIsAI(unit) then
+			local class = select(2, UnitClass(unit))
+			return B.ClassColorString(class)
+		end
+		return B.HexRGB(B.UnitColor(unit))
+	end
+
+	local function colorsAndPercent(a, b, ...)
+		if(a <= 0 or b == 0) then
+			return nil, ...
+		elseif(a >= b) then
+			return nil, select(-3, ...)
+		end
+
+		local num = select('#', ...) / 3
+		local segment, relperc = math.modf((a / b) * (num - 1))
+		return relperc, select((segment * 3) + 1, ...)
+	end
+
+	function B:RGBColorGradient(...)
+		local relperc, r1, g1, b1, r2, g2, b2 = colorsAndPercent(...)
+		if(relperc) then
+			return r1 + (r2 - r1) * relperc, g1 + (g2 - g1) * relperc, b1 + (b2 - b1) * relperc
+		else
+			return r1, g1, b1
+		end
+	end
 end
 
 -- Scan tooltip
 do
 	local iLvlDB = {}
-	local itemLevelString = "^"..gsub(ITEM_LEVEL, "%%d", "")
+	local itemLevelString = gsub(ITEM_LEVEL, "%%d", "")
+	itemLevelString = gsub(itemLevelString, "%s+$", "")
 	local enchantString = gsub(ENCHANTED_TOOLTIP_LINE, "%%s", "(.+)")
 	local isUnknownString = {
 		[TRANSMOGRIFY_TOOLTIP_APPEARANCE_UNKNOWN] = true,
 		[TRANSMOGRIFY_TOOLTIP_ITEM_UNKNOWN_APPEARANCE_KNOWN] = true,
 	}
+	local interface = select(4, GetBuildInfo())
+	local isForever = interface >= 16001 and interface < 20000
+	local ARMOR, WEAPON = Enum.ItemClass.Armor, Enum.ItemClass.Weapon
+
+	local function GetLevelFromText(text)
+		if not text or B:IsSecretValue(text) then return end
+
+		text = gsub(text, "|c%x%x%x%x%x%x%x%x", "")
+		text = gsub(text, "|r", "")
+		text = gsub(text, "^%s+", "")
+		if itemLevelString == "" or strfind(text, itemLevelString, 1, true) ~= 1 then return end
+
+		local level = strmatch(text, "(%d+)")
+		return tonumber(level)
+	end
+
+	local function GetItemLevelFromInfo(link)
+		if not link then return end
+
+		local name, _, _, itemLevel, _, _, _, _, _, _, _, classID = C_Item.GetItemInfo(link)
+		if not name or B:IsSecretValue(itemLevel) then return end
+		if itemLevel and itemLevel > 1 and (classID == ARMOR or classID == WEAPON) then
+			return itemLevel
+		end
+	end
 
 	local slotData = {gems={},gemsColor={}}
 	function B.GetItemLevel(link, arg1, arg2, fullScan)
 		if fullScan then
 			local data = C_TooltipInfo.GetInventoryItem(arg1, arg2)
-			if not data then return end
+			if not data then return "tooSoon" end
 
 			wipe(slotData.gems)
 			wipe(slotData.gemsColor)
@@ -194,57 +275,67 @@ do
 			for i = 2, #data.lines do
 				local lineData = data.lines[i]
 				if not slotData.iLvl then
-					local text = lineData.leftText
-					local found = text and strfind(text, itemLevelString)
-					if found then
-						local level = strmatch(text, "(%d+)%)?$")
-						slotData.iLvl = tonumber(level) or 0
-					end
-				elseif data.id == 158075 then -- heart of azeroth
+					slotData.iLvl = GetLevelFromText(lineData.leftText)
+				end
+
+				if data.id == 158075 then -- heart of azeroth
 					if lineData.essenceIcon then
 						num = num + 1
 						slotData.gems[num] = lineData.essenceIcon
 						slotData.gemsColor[num] = lineData.leftColor
 					end
-				else
-					if lineData.enchantID then
-						slotData.enchantText = strmatch(lineData.leftText, enchantString)
-					elseif lineData.gemIcon then
-						num = num + 1
-						slotData.gems[num] = lineData.gemIcon
-					elseif lineData.socketType then
-						num = num + 1
-						slotData.gems[num] = format("Interface\\ItemSocketingFrame\\UI-EmptySocket-%s", lineData.socketType)
-					end
+				elseif lineData.enchantID then
+					slotData.enchantText = strmatch(lineData.leftText, enchantString)
+				elseif lineData.gemIcon then
+					num = num + 1
+					slotData.gems[num] = lineData.gemIcon
+				elseif lineData.socketType then
+					num = num + 1
+					slotData.gems[num] = format("Interface\\ItemSocketingFrame\\UI-EmptySocket-%s", lineData.socketType)
 				end
+			end
+
+			if not slotData.iLvl then
+				slotData.iLvl = GetItemLevelFromInfo(link)
 			end
 
 			return slotData
 		else
+			if not link then return end
 			if iLvlDB[link] then return iLvlDB[link] end
 
-			local data
-			if arg1 and type(arg1) == "string" then
-				data = C_TooltipInfo.GetInventoryItem(arg1, arg2)
-			elseif arg1 and type(arg1) == "number" then
-				data = C_TooltipInfo.GetBagItem(arg1, arg2)
-			else
-				data = C_TooltipInfo.GetHyperlink(link, nil, nil, true)
+			-- Forever's item tooltip has no item level line, so prefer the item API there
+			local level
+			if isForever then
+				level = GetItemLevelFromInfo(link)
 			end
-			if not data then return end
 
-			for i = 2, 5 do
-				local lineData = data.lines[i]
-				if not lineData then break end
-				local text = lineData.leftText
-				local found = text and strfind(text, itemLevelString)
-				if found then
-					local level = strmatch(text, "(%d+)%)?$")
-					iLvlDB[link] = tonumber(level)
-					break
+			if not level then
+				local data
+				if arg1 and type(arg1) == "string" then
+					data = C_TooltipInfo.GetInventoryItem(arg1, arg2)
+				elseif arg1 and type(arg1) == "number" then
+					data = C_TooltipInfo.GetBagItem(arg1, arg2)
+				else
+					data = C_TooltipInfo.GetHyperlink(link, nil, nil, true)
+				end
+
+				if data then
+					for i = 2, #data.lines do
+						level = GetLevelFromText(data.lines[i].leftText)
+						if level then break end
+					end
 				end
 			end
-			return iLvlDB[link]
+
+			if not level and not isForever then
+				level = GetItemLevelFromInfo(link)
+			end
+
+			if level then
+				iLvlDB[link] = level
+			end
+			return level
 		end
 	end
 
@@ -370,6 +461,11 @@ do
 		"ScrollDownBorder",
 	}
 	function B:StripTextures(kill)
+		if not self then
+			-- Capture the caller before protected skin/event callbacks unwind the stack.
+			error("NDui: StripTextures received a nil frame. Caller stack:\n"..debugstack(2, 20, 20), 2)
+		end
+
 		local frameName = self.GetName and self:GetName()
 		for _, texture in pairs(blizzTextures) do
 			local blizzFrame = self[texture] or (frameName and _G[frameName..texture])
@@ -420,6 +516,16 @@ do
 	B:RegisterEvent("CVAR_UPDATE", B.UpdateCVars)
 end
 
+local old_SetupTextureCoordinates = BackdropTemplateMixin.SetupTextureCoordinates
+local function SetupTextureCoordinates(self)
+	if not self:CanBeAccessedInContext() then return end
+
+	local width, height = self:GetSize()
+	if B:IsSecretValue(width) or B:IsSecretValue(height) then return end
+
+	old_SetupTextureCoordinates(self)
+end
+
 -- UI widgets
 do
 	-- HelpTip
@@ -444,6 +550,8 @@ do
 			fs:SetTextColor(cr, cg, cb)
 		elseif color == "system" then
 			fs:SetTextColor(1, .8, 0)
+		elseif color == "info" then
+			fs:SetTextColor(.6, .8, 1)
 		end
 		if anchor and x and y then
 			fs:SetPoint(anchor, x, y)
@@ -546,10 +654,11 @@ do
 
 		shadowBackdrop.edgeSize = size or 5
 		self.__shadow = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+		self.__shadow.SetupTextureCoordinates = SetupTextureCoordinates
 		self.__shadow:SetOutside(self, size or 4, size or 4)
 		self.__shadow:SetBackdrop(shadowBackdrop)
 		self.__shadow:SetBackdropBorderColor(0, 0, 0, size and 1 or .4)
-		self.__shadow:SetFrameLevel(1)
+		self.__shadow:SetFrameLevel(0) -- needs review
 
 		return self.__shadow
 	end
@@ -570,6 +679,7 @@ do
 	end
 
 	function B:CreateBD(a)
+		self.SetupTextureCoordinates = SetupTextureCoordinates
 		defaultBackdrop.edgeSize = C.mult
 		self:SetBackdrop(defaultBackdrop)
 		self:SetBackdropColor(0, 0, 0, a or C.db["Skins"]["SkinAlpha"])
@@ -707,16 +817,23 @@ do
 		["orange"] = Enum.ItemQuality.Legendary,
 		["artifact"] = Enum.ItemQuality.Artifact,
 		["account"] = Enum.ItemQuality.Heirloom,
+		["epic"] = Enum.ItemQuality.Epic,
+		["legendary"] = Enum.ItemQuality.Legendary,
 	}
+	-- Tooltips can be protected (forbidden) while Blizzard reuses them, e.g. the loot preview
+	-- inside the EncounterJournal. Touching their backdrop from these hooks then throws
+	-- "Attempt to access forbidden object from code tainted by an AddOn".
 	local function updateIconBorderColorByAtlas(border, atlas)
+		if border.__owner:IsForbidden() then return end
 		local atlasAbbr = atlas and strmatch(atlas, "%-(%w+)$")
-		local quality = atlasAbbr and AtlasToQuality[atlasAbbr]
+		local quality = atlasAbbr and AtlasToQuality[strlower(atlasAbbr)]
 		local color = DB.QualityColors[quality or 1]
 		border.__owner.bg:SetBackdropBorderColor(color.r, color.g, color.b)
 	end
 
 	local greyRGB = DB.QualityColors[0].r
 	local function updateIconBorderColor(border, r, g, b)
+		if border.__owner:IsForbidden() then return end
 		if not r or r == greyRGB or (r>.99 and g>.99 and b>.99) then
 			r, g, b = 0, 0, 0
 		end
@@ -724,7 +841,7 @@ do
 		border:Hide(true) -- fix icon border
 	end
 	local function resetIconBorderColor(border, texture)
-		if not texture then
+		if not texture and not border.__owner:IsForbidden() then
 			border.__owner.bg:SetBackdropBorderColor(0, 0, 0)
 		end
 	end
@@ -861,6 +978,10 @@ do
 		"Center",
 	}
 	function B:Reskin(noHighlight, override)
+		if not self then
+			-- Capture the caller before protected skin/event callbacks unwind the stack.
+			error("NDui: Reskin received a nil frame. Caller stack:\n"..debugstack(2, 20, 20), 2)
+		end
 		if self.SetNormalTexture and not override then self:SetNormalTexture(0) end
 		if self.SetHighlightTexture then self:SetHighlightTexture(0) end
 		if self.SetPushedTexture then self:SetPushedTexture(0) end
@@ -925,11 +1046,13 @@ do
 		bg:SetPoint("BOTTOMRIGHT", -8, 0)
 		self.bg = bg
 
-		self:SetHighlightTexture(DB.bdTex)
-		local hl = self:GetHighlightTexture()
-		hl:ClearAllPoints()
-		hl:SetInside(bg)
-		hl:SetVertexColor(cr, cg, cb, .25)
+		if self.SetHighlightTexture then
+			self:SetHighlightTexture(DB.bdTex)
+			local hl = self:GetHighlightTexture()
+			hl:ClearAllPoints()
+			hl:SetInside(bg)
+			hl:SetVertexColor(cr, cg, cb, .25)
+		end
 	end
 
 	function B:ResetTabAnchor()
@@ -1108,6 +1231,10 @@ do
 		button.isSetting = nil
 	end
 	function B:ReskinClose(parent, xOffset, yOffset, override)
+		if not self then
+			-- Capture the caller before protected skin/event callbacks unwind the stack.
+			error("NDui: ReskinClose received a nil frame. Caller stack:\n"..debugstack(2, 20, 20), 2)
+		end
 		parent = parent or self:GetParent()
 		xOffset = xOffset or -6
 		yOffset = yOffset or -6
@@ -1419,6 +1546,10 @@ do
 
 	local buttonNames = {"MaximizeButton", "MinimizeButton"}
 	function B:ReskinMinMax()
+		if not self then
+			-- Capture the caller before protected skin/event callbacks unwind the stack.
+			error("NDui: ReskinMinMax received a nil frame. Caller stack:\n"..debugstack(2, 20, 20), 2)
+		end
 		for _, name in next, buttonNames do
 			local button = self[name]
 			if button then
@@ -1836,13 +1967,13 @@ end
 -- Add API
 do
 	local function WatchPixelSnap(frame, snap)
-		if (frame and not frame:IsForbidden()) and frame.PixelSnapDisabled and snap then
+		if B:NotSecretTable(frame) and (frame and not frame:IsForbidden()) and frame.PixelSnapDisabled and snap then
 			frame.PixelSnapDisabled = nil
 		end
 	end
 
 	local function DisablePixelSnap(frame)
-		if (frame and not frame:IsForbidden()) and not frame.PixelSnapDisabled then
+		if B:NotSecretTable(frame) and (frame and not frame:IsForbidden()) and not frame.PixelSnapDisabled then
 			if frame.SetSnapToPixelGrid then
 				frame:SetSnapToPixelGrid(false)
 				frame:SetTexelSnappingBias(0)

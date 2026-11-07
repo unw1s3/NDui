@@ -26,6 +26,7 @@ DB.Devs = {
 	["打蛋獵手-地獄吼"] = true,
 	["Huniverster-Koranos"] = true,
 	["Therefire-TheseGoToEleven"] = true,
+	["泽津京 耶丽埃"] = true,
 }
 local function isDeveloper()
 	local rawName = gsub(DB.MyFullName, "%s", "")
@@ -40,8 +41,11 @@ SLASH_RELOADUI1 = "/rl"
 SlashCmdList["NDUI_ENUMTIP"] = function()
 	local enumf = EnumerateFrames()
 	while enumf do
-		if (enumf:IsObjectType("GameTooltip") or strfind((enumf:GetName() or ""):lower(), "tip")) and enumf:IsVisible() and enumf:GetPoint() then
-			print(enumf:GetName())
+		local name = enumf:GetName()
+		local isTooltip = enumf:IsObjectType("GameTooltip")
+			or (type(name) == "string" and B:NotSecretValue(name) and strfind(name, "[Tt][Ii][Pp]"))
+		if isTooltip and enumf:IsVisible() and enumf:GetPoint() then
+			print(name)
 		end
 		enumf = EnumerateFrames(enumf)
 	end
@@ -148,56 +152,6 @@ do
 	end
 	SLASH_NDUI_VER_CHECK1 = "/nduiver"
 end
-
-SlashCmdList["NDUI_GET_INSTANCES"] = function()
-	if not EncounterJournal then return end
-	local tierID = EJ_GetCurrentTier()
-	print("local _, ns = ...")
-	print("local B, C, L, DB = unpack(ns)")
-	print("local module = B:GetModule(\"AurasTable\")")
-	print("local TIER = "..tierID)
-	print("local INSTANCE")
-	local i = 0
-	while true do
-		i = i + 1
-		local instID, instName = EJ_GetInstanceByIndex(i, false)
-		if not instID then return end
-		print("INSTANCE = "..instID.." -- "..instName)
-	end
-end
-SLASH_NDUI_GET_INSTANCES1 = "/getinst"
-
-SlashCmdList["NDUI_GET_ENCOUNTERS"] = function()
-	if not EncounterJournal then return end
-	local tierID = EJ_GetCurrentTier()
-	local instID = EncounterJournal.instanceID
-	EJ_SelectInstance(instID)
-	local instName = EJ_GetInstanceInfo()
-	print("local _, ns = ...")
-	print("local B, C, L, DB = unpack(ns)")
-	print("local module = B:GetModule(\"AurasTable\")")
-	print("local TIER = "..tierID)
-	print("local INSTANCE = "..instID.." -- "..instName)
-	print("local BOSS")
-	local i = 0
-	while true do
-		i = i + 1
-		local name, _, boss = EJ_GetEncounterInfoByIndex(i)
-		if not name then return end
-		print("BOSS = "..boss.." -- "..name)
-	end
-end
-SLASH_NDUI_GET_ENCOUNTERS1 = "/getenc"
-
-SlashCmdList["NDUI_DUMPSPELLS"] = function(arg)
-	for spell in gmatch(arg, "%d+") do
-		local name = GetSpellName(spell)
-		if name then
-			print("module:RegisterDebuff(TIER, INSTANCE, BOSS, "..spell..") -- "..name)
-		end
-	end
-end
-SLASH_NDUI_DUMPSPELLS1 = "/getss"
 
 SlashCmdList["NDUI_GET_TIERSETS"] = function()
 	if not EncounterJournal then return end

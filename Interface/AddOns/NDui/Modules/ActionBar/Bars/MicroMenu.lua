@@ -137,8 +137,9 @@ function Bar:MicroMenu_Setup()
 		end
 	end
 
-	local column = min(12, perRow)
-	local rows = ceil(12/perRow)
+	local maxButtons = 13 -- total buttons
+	local column = min(maxButtons, perRow)
+	local rows = ceil(maxButtons/perRow)
 	local width = column*size + (column-1)*margin
 	local height = size*rows + (rows-1)*margin
 	menubar:SetSize(width, height)
@@ -153,16 +154,21 @@ function Bar:MicroMenu()
 	menubar.mover = B.Mover(menubar, L["Menubar"], "Menubar", C.Skins.MicroMenuPos)
 	Bar:MicroMenu_Lines(menubar)
 
+	StoreMicroButton:ClearAllPoints()
+	StoreMicroButton:SetPoint("CENTER")
+	StoreMicroButton:Show()
+
 	-- Generate Buttons
 	local buttonInfo = {
 		{"player", "CharacterMicroButton"},
 		{"spellbook", "ProfessionMicroButton"},
-		{"talents", "PlayerSpellsMicroButton"},
-		{"achievements", "AchievementMicroButton"},
+		{"home", "SpellbookMicroButton"},
+		{"talents", "TalentMicroButton"},
+		{"achievements", "LegacyMicroButton"},
 		{"quests", "QuestLogMicroButton"},
 		{"guild", "GuildMicroButton"},
 		{"LFG", "LFDMicroButton"},
-		{"encounter", "EJMicroButton"},
+		--{"encounter", "EJMicroButton"},
 		{"collections", "CollectionsMicroButton"},
 		{"store", "StoreMicroButton"},
 		{"help", "MainMenuMicroButton", MicroButtonTooltipText(MAINMENU_BUTTON, "TOGGLEGAMEMENU")},
@@ -182,6 +188,7 @@ function Bar:MicroMenu()
 	end
 	B.HideObject(HelpOpenWebTicketButton)
 	MainMenuMicroButton:SetScript("OnUpdate", nil)
+	B.StripTextures(MicroMenu)
 
 	BagsBar:Hide()
 	BagsBar:UnregisterAllEvents()

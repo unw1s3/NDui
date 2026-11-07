@@ -194,7 +194,7 @@ C.themes["Blizzard_ProfessionsCustomerOrders"] = function()
 			local button = slot.Button
 			if button and not button.styled then
 				button.bg = B.ReskinIcon(button.Icon)
-				B.ReskinIconBorder(button.IconBorder, true)
+				B.ReskinIconBorder(button.IconBorder, true, true)
 				if button.SlotBackground then
 					button.SlotBackground:Hide()
 				end
@@ -232,9 +232,4 @@ C.themes["Blizzard_ProfessionsCustomerOrders"] = function()
 	hooksecurefunc(frame.MyOrdersPage.OrderList.ScrollBox, "Update", function(self)
 		self:ForEachFrame(reskinOrderIcon)
 	end)
-
-	-- Item flyout
-	if OpenProfessionsItemFlyout then
-		hooksecurefunc("OpenProfessionsItemFlyout", B.ReskinProfessionsFlyout)
-	end
 end

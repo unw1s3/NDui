@@ -22,6 +22,16 @@ local function reskinGuildCards(cards)
 	B.ReskinArrow(cards.NextPage, "right")
 end
 
+local function createAvatarBorder(parent, width, height, point, relativeTo, relativePoint, xOffset, yOffset)
+	local border = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+	border:SetSize(width, height)
+	border:SetPoint(point, relativeTo, relativePoint, xOffset or 0, yOffset or 0)
+	local level = parent:GetFrameLevel()
+	border:SetFrameLevel(level == 0 and 0 or level - 1)
+	B.CreateBD(border, .25)
+	return border
+end
+
 local function reskinCommunityCard(self)
 	for i = 1, self.ScrollTarget:GetNumChildren() do
 		local child = select(i, self.ScrollTarget:GetChildren())
@@ -29,7 +39,7 @@ local function reskinCommunityCard(self)
 			child.CircleMask:Hide()
 			child.LogoBorder:Hide()
 			child.Background:Hide()
-			B.ReskinIcon(child.CommunityLogo)
+			child.__avatarBorder = createAvatarBorder(child, 64, 64, "LEFT", child, "LEFT", 5, 0)
 			B.Reskin(child)
 
 			child.styled = true
@@ -48,7 +58,7 @@ end
 
 local function updateCommunitiesSelection(texture, show)
 	local button = texture:GetParent()
-	if show then
+	if B:NotSecretValue(show) and show then
 		if texture:GetTexCoord() == 0 then
 			button.bg:SetBackdropColor(0, 1, 0, .25)
 		else
@@ -107,7 +117,14 @@ C.themes["Blizzard_Communities"] = function()
 	local r, g, b = DB.r, DB.g, DB.b
 	local CommunitiesFrame = CommunitiesFrame
 
-	B.ReskinPortraitFrame(CommunitiesFrame)
+	-- The custom portrait is passed to the restricted C_Club.SetAvatarTexture.
+	-- Reproduce the safe parts of ReskinPortraitFrame without stripping that texture.
+	CommunitiesFrame:DisableDrawLayer("BACKGROUND")
+	CommunitiesFrame:DisableDrawLayer("BORDER")
+	B.StripTextures(CommunitiesFrame.Inset)
+	local frameBG = B.SetBD(CommunitiesFrame)
+	frameBG:SetAllPoints(CommunitiesFrame)
+	B.ReskinClose(CommunitiesFrame.CloseButton)
 	CommunitiesFrame.NineSlice:Hide()
 	CommunitiesFrame.PortraitOverlay:SetAlpha(0)
 	B.ReskinDropDown(CommunitiesFrame.StreamDropdown)
@@ -127,12 +144,18 @@ C.themes["Blizzard_Communities"] = function()
 	for _, name in next, {"GuildFinderFrame", "InvitationFrame", "TicketFrame", "CommunityFinderFrame", "ClubFinderInvitationFrame"} do
 		local frame = CommunitiesFrame[name]
 		if frame then
-			B.StripTextures(frame)
+			-- Avatar textures are later passed to the restricted C_Club.SetAvatarTexture.
+			-- Do not let the generic region stripper mutate those textures.
+			if frame.CircleMask then
+				frame:DisableDrawLayer("BACKGROUND")
+			else
+				B.StripTextures(frame)
+			end
 			frame.InsetFrame:Hide()
 			if frame.CircleMask then
 				frame.CircleMask:Hide()
 				frame.IconRing:Hide()
-				B.ReskinIcon(frame.Icon)
+				frame.__avatarBorder = createAvatarBorder(frame, 63, 63, "TOP", frame.InvitationText, "BOTTOM", 0, -35)
 			end
 			if frame.FindAGuildButton then B.Reskin(frame.FindAGuildButton) end
 			if frame.AcceptButton then B.Reskin(frame.AcceptButton) end
@@ -197,14 +220,15 @@ C.themes["Blizzard_Communities"] = function()
 
 				child:SetHighlightTexture(0)
 				child.IconRing:SetAlpha(0)
-				child.__iconBorder = B.ReskinIcon(child.Icon)
+				child.__iconBorder = createAvatarBorder(child, 40, 40, "TOPLEFT", child, "TOPLEFT", 10, -14)
 				child.Background:Hide()
 				child.Selection:SetAlpha(0)
 				hooksecurefunc(child.Selection, "SetShown", updateCommunitiesSelection)
 			end
 
 			child.CircleMask:Hide()
-			child.__iconBorder:SetShown(child.IconRing:IsShown())
+			local borderShown = child.IconRing:IsShown()
+			child.__iconBorder:SetShown(B:NotSecretValue(borderShown) and borderShown)
 		end
 	end)
 
@@ -275,7 +299,9 @@ C.themes["Blizzard_Communities"] = function()
 
 	do
 		local dialog = CommunitiesTicketManagerDialog
-		B.StripTextures(dialog)
+		-- Remove the dialog artwork without touching the restricted avatar texture.
+		dialog:DisableDrawLayer("BORDER")
+		dialog.Separator:Hide()
 		B.SetBD(dialog)
 		dialog.Background:Hide()
 		B.Reskin(dialog.LinkToChat)

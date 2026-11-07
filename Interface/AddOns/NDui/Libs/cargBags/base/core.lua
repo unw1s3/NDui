@@ -27,7 +27,6 @@ local global = C_AddOns.GetAddOnMetadata(parent, 'X-cargBags')
 --  class-generation, helper-functions and the Blizzard-replacement
 local cargBags = CreateFrame("Button")
 
-
 ns.cargBags = cargBags
 if(global) then
 	_G[global] = cargBags
@@ -87,9 +86,10 @@ function cargBags:ReplaceBlizzard(name)
 
 	OpenAllBags = toggleBag	-- Name is misleading, Blizz-function actually toggles bags
 	OpenBackpack = toggleBag -- Blizz does not provide toggling here
-	CloseAllBags = closeBag
-	CloseBackpack = closeBag
 	OpenBag = toggleBag		-- fixed the loot won alert frame
+
+	hooksecurefunc("CloseAllBags", closeBag)
+	hooksecurefunc("CloseBackpack", closeBag)
 
 	BankFrame:UnregisterAllEvents()
 end
@@ -132,7 +132,7 @@ cargBags:SetScript("OnEvent", function(self, event)
 		self.atBank = true
 
 		if(impl:IsShown()) then
-			impl:OnEvent("BAG_UPDATE")
+		--	impl:OnEvent("BAG_UPDATE") -- No need to update twice here, needs review
 		else
 			impl:Show()
 		end

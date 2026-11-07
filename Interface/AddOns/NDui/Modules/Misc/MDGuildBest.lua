@@ -28,7 +28,9 @@ function M:GuildBest_UpdateTooltip()
 	GameTooltip:SetText(name, 1, 1, 1)
 	GameTooltip:AddLine(format(CHALLENGE_MODE_POWER_LEVEL, leaderInfo.keystoneLevel))
 	for i = 1, #leaderInfo.members do
-		local classColorStr = DB.ClassColors[leaderInfo.members[i].classFileName].colorStr
+		local classFileName = leaderInfo.members[i].classFileName
+		local classColor = classFileName and C_ClassColor.GetClassColor(classFileName)
+		local classColorStr = classColor and classColor:GenerateHexColor() or "ffffffff"
 		GameTooltip:AddLine(format(CHALLENGE_MODE_GUILD_BEST_LINE, classColorStr,leaderInfo.members[i].name))
 	end
 	GameTooltip:Show()
@@ -77,7 +79,7 @@ function M:GuildBest_Create()
 			if DetailsKeystoneInfoFrame and DetailsKeystoneInfoFrame:IsShown() then
 				DetailsKeystoneInfoFrame:Hide()
 			else
-				SlashCmdList.KEYSTONE()
+				SlashCmdList.KEYSTONE("/keys", ChatFrame1.editBox)
 			end
 		end)
 		local tex = button:CreateTexture()
@@ -101,7 +103,8 @@ function M:GuildBest_SetUp(leaderInfo)
 		str = CHALLENGE_MODE_GUILD_BEST_LINE_YOU
 	end
 
-	local classColorStr = DB.ClassColors[leaderInfo.classFileName].colorStr
+	local classColor = leaderInfo.classFileName and C_ClassColor.GetClassColor(leaderInfo.classFileName)
+	local classColorStr = classColor and classColor:GenerateHexColor() or "ffffffff"
 	self.CharacterName:SetText(format(str, classColorStr, leaderInfo.name))
 	self.Level:SetText(leaderInfo.keystoneLevel)
 end
@@ -145,12 +148,15 @@ function M:GuildBest_Update()
 	end
 end
 
+local function LoadGuildBest()
+	hooksecurefunc(ChallengesFrame, "Update", M.GuildBest_Update)
+	M:KeystoneInfo_Create()
+	ChallengesFrame.WeeklyInfo.Child.WeeklyChest:HookScript("OnEnter", M.KeystoneInfo_WeeklyRuns)
+end
+
 function M.GuildBest_OnLoad(event, addon)
 	if addon == "Blizzard_ChallengesUI" then
-		hooksecurefunc(ChallengesFrame, "Update", M.GuildBest_Update)
-		M:KeystoneInfo_Create()
-		ChallengesFrame.WeeklyInfo.Child.WeeklyChest:HookScript("OnEnter", M.KeystoneInfo_WeeklyRuns)
-
+		LoadGuildBest()
 		B:UnregisterEvent(event, M.GuildBest_OnLoad)
 	end
 end
@@ -204,7 +210,7 @@ function M:KeystoneInfo_Create()
 		for fullName, info in pairs(NDuiADB["KeystoneInfo"]) do
 			local name = Ambiguate(fullName, "none")
 			local mapID, level, class, faction = strsplit(":", info)
-			local color = B.HexRGB(B.ClassColor(class))
+			local color = B.ClassColorString(class)
 			local factionColor = faction == "Horde" and "|cffff5040" or "|cff00adf0"
 			local dungeon = C_ChallengeMode_GetMapUIInfo(tonumber(mapID))
 			GameTooltip:AddDoubleLine(format(color.."%s:|r", name), format("%s%s(%s)|r", factionColor, dungeon, level))
@@ -242,7 +248,11 @@ function M:GuildBest()
 	if not C.db["Misc"]["MDGuildBest"] then return end
 
 	hasAngryKeystones = C_AddOns.IsAddOnLoaded("AngryKeystones")
-	B:RegisterEvent("ADDON_LOADED", M.GuildBest_OnLoad)
+	if C_AddOns.IsAddOnLoaded("Blizzard_ChallengesUI") and ChallengesFrame then
+		LoadGuildBest()
+	else
+		B:RegisterEvent("ADDON_LOADED", M.GuildBest_OnLoad)
+	end
 
 	M:KeystoneInfo_Update()
 	B:RegisterEvent("BAG_UPDATE", M.KeystoneInfo_Update)

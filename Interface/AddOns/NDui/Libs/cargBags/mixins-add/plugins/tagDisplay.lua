@@ -94,6 +94,8 @@ end
 
 -- Tags
 local function GetNumFreeSlots(name)
+	name = strmatch(name, "^(.-)Other$") or name
+
 	if name == "Bag" then
 		local totalFree, freeSlots, bagFamily = 0
 		for i = 0, 4 do -- reagent bank excluded
@@ -104,8 +106,8 @@ local function GetNumFreeSlots(name)
 		end
 		return totalFree
 	elseif name == "Bank" then
-		local numFreeSlots = GetContainerNumFreeSlots(-1)
-		for bagID = 6, 12 do
+		local numFreeSlots = 0
+		for _, bagID in ipairs(cargBags.BagStrings.bank) do
 			numFreeSlots = numFreeSlots + GetContainerNumFreeSlots(bagID)
 		end
 		return numFreeSlots
@@ -115,7 +117,7 @@ local function GetNumFreeSlots(name)
 		return GetContainerNumFreeSlots(5)
 	elseif name == "Account" then
 		local numFreeSlots = 0
-		for bagID = 13, 17 do
+		for _, bagID in ipairs(cargBags.BagStrings.accountbank) do
 			numFreeSlots = numFreeSlots + GetContainerNumFreeSlots(bagID)
 		end
 		return numFreeSlots

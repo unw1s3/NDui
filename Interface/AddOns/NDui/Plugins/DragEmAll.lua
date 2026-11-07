@@ -16,6 +16,7 @@ local frames = {
 	["ChannelFrame"] = false,
 	["ChatConfigFrame"] = false,
 	["CommunitiesFrame"] = false, -- needs review
+	["CooldownViewerSettings"] = false,
 	["DressUpFrame"] = false,
 	["FriendsFrame"] = false,
 	["GossipFrame"] = false,
@@ -40,9 +41,10 @@ local frames = {
 	["TabardFrame"] = false,
 	["TaxiFrame"] = false,
 	["TokenFrame"] = true,
-	["TradeFrame"] = false,
+	--["TradeFrame"] = false,
 	["TutorialFrame"] = false,
 	["SettingsPanel"] = false,
+	["SocialUIFrame"] = false,
 }
 
 -- Frame Existing Check
@@ -74,7 +76,7 @@ local lodFrames = {
 	Blizzard_Collections		= { ["WardrobeFrame"] = false, ["WardrobeOutfitEditFrame"] = false },
 	Blizzard_CovenantRenown		= { ["CovenantRenownFrame"] = false, },
 	Blizzard_CovenantSanctum	= { ["CovenantSanctumFrame"] = false, },
-	Blizzard_EncounterJournal	= { ["EncounterJournal"] = false },
+	--Blizzard_EncounterJournal	= { ["EncounterJournal"] = false },
 	Blizzard_FlightMap			= { ["FlightMapFrame"] = false },
 	Blizzard_GenericTraitUI		= { ["GenericTraitFrame"] = false },
 	Blizzard_GMSurveyUI			= { ["GMSurveyFrame"] = false },
@@ -93,7 +95,7 @@ local lodFrames = {
 	Blizzard_OrderHallUI		= { ["OrderHallTalentFrame"] = false, },
 	Blizzard_ScrappingMachineUI	= { ["ScrappingMachineFrame"] = false },
 	Blizzard_Professions		= { ["InspectRecipeFrame"] = false, ["ProfessionsFrame"] = false },
-	Blizzard_ProfessionsBook	= { ["ProfessionsBookFrame"] = false },
+	--Blizzard_ProfessionsBook	= { ["ProfessionsBookFrame"] = false },
 	Blizzard_ProfessionsCustomerOrders	= { ["ProfessionsCustomerOrdersFrame"] = false },
 	Blizzard_TalentUI			= { ["PlayerTalentFrame"] = false, ["PVPTalentPrestigeLevelDialog"] = false, },
 	Blizzard_TimeManager		= { ["TimeManagerFrame"] = false },

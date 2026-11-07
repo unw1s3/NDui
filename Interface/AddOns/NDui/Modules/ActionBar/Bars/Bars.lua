@@ -5,8 +5,17 @@ local LAB = LibStub("LibActionButton-1.0-NDui")
 
 local _G = _G
 local tinsert, next = tinsert, next
-local GetActionTexture = GetActionTexture
 local margin, padding = C.Bars.margin, C.Bars.padding
+
+-- Growth directions: dx/dy are the axes the bar fills along, so button 1 sits
+-- in the corner the bar grows away from. 1 = down-right (the historical
+-- layout), 2 = down-left, 3 = up-right, 4 = up-left.
+local growDirections = {
+	[1] = {dx = 1, dy = 1},
+	[2] = {dx = -1, dy = 1},
+	[3] = {dx = 1, dy = -1},
+	[4] = {dx = -1, dy = -1},
+}
 
 function Bar:UpdateAllSize()
 	if not C.db["Actionbar"]["Enable"] then return end
@@ -23,10 +32,34 @@ function Bar:UpdateAllSize()
 	Bar:UpdateVehicleButton()
 end
 
+function Bar:UpdateCastVFX(button)
+	local buttonWidth, buttonHeight = button:GetSize()
+	local maskWidth, maskHeight = buttonWidth * 1.5, buttonHeight * 1.5
+
+	local spellCastAnim = button.SpellCastAnimFrame
+	if spellCastAnim then
+		local endBurst = spellCastAnim.EndBurst
+		if endBurst then
+			endBurst.EndMask:SetSize(maskWidth, maskHeight)
+		end
+
+		local spellCastFill = spellCastAnim.Fill
+		if spellCastFill then
+			spellCastFill.FillMask:SetSize(maskWidth, maskHeight)
+		end
+	end
+	local interruptDisplay = button.InterruptDisplay
+	local interruptHighlight = interruptDisplay and interruptDisplay.Highlight
+	if interruptHighlight then
+		interruptHighlight.Mask:SetSize(maskWidth, maskHeight)
+	end
+end
+
 function Bar:UpdateFontSize(button, fontSize)
 	B.SetFontSize(button.Name, fontSize)
 	B.SetFontSize(button.Count, fontSize)
 	B.SetFontSize(button.HotKey, fontSize)
+	Bar:UpdateCastVFX(button)
 end
 
 function Bar:UpdateActionSize(name)
@@ -65,17 +98,18 @@ function Bar:UpdateActionSize(name)
 			Bar:UpdateFontSize(button, fontSize)
 		end
 	else
+		local grow = growDirections[C.db["Actionbar"][name.."Grow"] or 1] or growDirections[1]
+		local anchor = (grow.dy > 0 and "TOP" or "BOTTOM")..(grow.dx > 0 and "LEFT" or "RIGHT")
+
 		for i = 1, num do
 			local button = frame.buttons[i]
 			button:SetSize(size, size)
 			button:ClearAllPoints()
-			if i == 1 then
-				button:SetPoint("TOPLEFT", frame, padding, -padding)
-			elseif mod(i-1, perRow) == 0 then
-				button:SetPoint("TOP", frame.buttons[i-perRow], "BOTTOM", 0, -margin)
-			else
-				button:SetPoint("LEFT", frame.buttons[i-1], "RIGHT", margin, 0)
-			end
+			local x = padding + mod(i-1, perRow) * (size + margin)
+			local y = padding + floor((i-1)/perRow) * (size + margin)
+			if grow.dx < 0 then x = -x end
+			if grow.dy > 0 then y = -y end
+			button:SetPoint(anchor, frame, anchor, x, y)
 			button:Show()
 			Bar:UpdateFontSize(button, fontSize)
 		end
@@ -110,6 +144,7 @@ function Bar:UpdateButtonConfig(i)
 	self.buttonConfig.clickOnDown = GetCVarBool("ActionButtonUseKeyDown")
 	self.buttonConfig.showGrid = C.db["Actionbar"]["Grid"]
 	self.buttonConfig.flyoutDirection = directions[C.db["Actionbar"]["Bar"..i.."Flyout"]]
+	self.buttonConfig.actionButtonUI = true -- rotation highlight
 
 	local hotkey = self.buttonConfig.text.hotkey
 	hotkey.font.font = DB.Font[1]
@@ -197,7 +232,7 @@ function Bar:UpdateBarConfig()
 end
 
 function Bar:ReassignBindings()
-	if InCombatLockdown() then return end
+	if InCombatLockdown() or Bar.isHousing then return end
 
 	for index = 1, 8 do
 		local frame = Bar.headers[index]
@@ -223,6 +258,15 @@ function Bar:ClearBindings()
 		if frame then
 			ClearOverrideBindings(frame)
 		end
+	end
+end
+
+function Bar:UpdateHousingState(state)
+	Bar.isHousing = (state ~= 0)
+	if Bar.isHousing then
+		Bar:ClearBindings()
+	else
+		Bar:ReassignBindings()
 	end
 end
 
@@ -338,6 +382,32 @@ function Bar:UpdateOverlays()
 	end
 end
 
+function Bar:UpdateCooldownText(name)
+	local buttons, fontSize
+	if name then
+		local frame = _G["NDui_Action"..name]
+		if not frame then return end
+		buttons = frame.buttons
+		fontSize = C.db["Actionbar"][name.."CDSize"]
+	else
+		buttons = Bar.buttons
+		fontSize = C.db["Actionbar"]["CDFontSize"]
+	end
+
+	for _, button in pairs(buttons) do
+		if button.cooldownText then
+			button.cooldownText:SetFont(DB.Font[1], fontSize, DB.Font[3])
+		end
+	end
+
+	if name then return end
+	for i = 1, 8 do
+		Bar:UpdateCooldownText("Bar"..i)
+	end
+	Bar:UpdateCooldownText("BarPet")
+	Bar:UpdateCooldownText("BarStance")
+end
+
 function Bar:OnLogin()
 	Bar.buttons = {}
 	Bar:MicroMenu()
@@ -356,6 +426,8 @@ function Bar:OnLogin()
 	Bar:UpdateVisibility()
 	Bar:UpdateAllSize()
 	Bar:HideBlizz()
+	Bar:UpdateCooldownText()
+	Bar:HunterAspectBar()
 
 	if C_PetBattles.IsInBattle() then
 		Bar:ClearBindings()
@@ -365,6 +437,7 @@ function Bar:OnLogin()
 	B:RegisterEvent("UPDATE_BINDINGS", Bar.ReassignBindings)
 	B:RegisterEvent("PET_BATTLE_CLOSE", Bar.ReassignBindings)
 	B:RegisterEvent("PET_BATTLE_OPENING_DONE", Bar.ClearBindings)
+	B:RegisterEvent("HOUSE_EDITOR_MODE_CHANGED", Bar.UpdateHousingState)
 
 	if AdiButtonAuras then
 		AdiButtonAuras:RegisterLAB("LibActionButton-1.0-NDui")

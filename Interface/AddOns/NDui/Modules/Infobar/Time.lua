@@ -70,7 +70,7 @@ local function checkTimeWalker(event)
 
 	for i = 1, numEvents do
 		local info = C_Calendar_GetDayEvent(0, today, i)
-		if info and strfind(info.title, PLAYER_DIFFICULTY_TIMEWALKER) and info.sequenceType ~= "END" then
+		if info and B:NotSecretValue(info.title) and strfind(info.title, PLAYER_DIFFICULTY_TIMEWALKER) and info.sequenceType ~= "END" then
 			isTimeWalker = true
 			walkerTexture = info.iconTexture
 			break
@@ -111,9 +111,9 @@ local questlist = {
 -- Check Invasion Status
 local region = GetCVar("portal")
 local legionZoneTime = {
-	["EU"] = 1565168400, -- CN-16
-	["US"] = 1565197200, -- CN-8
-	["CN"] = 1565226000, -- CN time 8/8/2019 09:00 [1]
+	["EU"] = 1762434000, -- 2025-11-06 13:00 UTC+0
+	["US"] = 1762421400, -- 2025-11-06 01:30 UTC-8
+	["CN"] = 1762450200, -- CN time 11/7/2025 01:30 [1]
 }
 local bfaZoneTime = {
 	["CN"] = 1546743600, -- CN time 1/6/2019 11:00 [1]
@@ -122,7 +122,7 @@ local bfaZoneTime = {
 }
 
 local invIndex = {
-	[1] = {title = L["Legion Invasion"], duration = 66600, maps = {630, 641, 650, 634}, timeTable = {}, baseTime = legionZoneTime[region] or legionZoneTime["CN"]},
+	[1] = {title = L["Legion Invasion"], duration = 52200, maps = {630, 641, 650, 634}, timeTable = {}, baseTime = legionZoneTime[region] or legionZoneTime["CN"]},
 	[2] = {title = L["BfA Invasion"], duration = 68400, maps = {862, 863, 864, 896, 942, 895}, timeTable = {4, 1, 6, 2, 5, 3}, baseTime = bfaZoneTime[region] or bfaZoneTime["CN"]},
 }
 
@@ -256,21 +256,6 @@ local communityFeastTime = {
 	["US"] = 1679751000, -- 21:30
 }
 
-local delveList = {
-	{uiMapID = 2248, delveID = 7787}, -- Earthcrawl Mines
-	{uiMapID = 2248, delveID = 7781}, -- Kriegval's Rest
-	{uiMapID = 2248, delveID = 7779}, -- Fungal Folly
-	{uiMapID = 2215, delveID = 7789}, -- Skittering Breach
-	{uiMapID = 2215, delveID = 7785}, -- Nightfall Sanctum
-	{uiMapID = 2215, delveID = 7783}, -- The Sinkhole
-	{uiMapID = 2215, delveID = 7780}, -- Mycomancer Cavern
-	{uiMapID = 2214, delveID = 7782}, -- The Waterworks
-	{uiMapID = 2214, delveID = 7788}, -- The Dread Pit
-	{uiMapID = 2255, delveID = 7790}, -- The Spiral Weave
-	{uiMapID = 2255, delveID = 7784}, -- Tak-Rethan Abyss
-	{uiMapID = 2255, delveID = 7786}, -- TThe Underkeep
-}
-
 info.onEnter = function(self)
 	self.entered = true
 
@@ -331,88 +316,13 @@ info.onEnter = function(self)
 			end
 		end
 	end
-
-	-- Delves
-	title = false
-	for _, v in pairs(delveList) do
-		local delveInfo = C_AreaPoiInfo_GetAreaPOIInfo(v.uiMapID, v.delveID)
-		if delveInfo then
-			addTitle(delveInfo.description)
-			local mapInfo = C_Map_GetMapInfo(v.uiMapID)
-			GameTooltip:AddDoubleLine(mapInfo.name.." - "..delveInfo.name, SecondsToTime(GetQuestResetTime(), true, nil, 3), 1,1,1, 1,1,1)
-		end
-	end
-
+--[=[
 	if IsShiftKeyDown() then
-		-- Elemental threats
-		title = false
-		for mapID, stormGroup in next, stormPoiIDs do
-			for _, areaPoiIDs in next, stormGroup do
-				for _, areaPoiID in next, areaPoiIDs do
-					local poiInfo = C_AreaPoiInfo_GetAreaPOIInfo(mapID, areaPoiID)
-					local elementType = poiInfo and poiInfo.atlasName and strmatch(poiInfo.atlasName, "ElementalStorm%-Lesser%-(.+)")
-					if elementType then
-						addTitle(poiInfo.name)
-						local mapInfo = C_Map_GetMapInfo(mapID)
-						local timeLeft = C_AreaPoiInfo_GetAreaPOISecondsLeft(areaPoiID) or 0
-						timeLeft = timeLeft/60
-						if timeLeft < 60 then r,g,b = 1,0,0 else r,g,b = 0,1,0 end
-						GameTooltip:AddDoubleLine(mapInfo.name..GetElementalType(elementType), GetFormattedTimeLeft(timeLeft), 1,1,1, r,g,b)
-						break
-					end
-				end
-			end
-		end
-	
-		-- Grand hunts
-		title = false
-		for areaPoiID, mapID in pairs(huntAreaToMapID) do
-			local poiInfo = C_AreaPoiInfo_GetAreaPOIInfo(1978, areaPoiID) -- Dragon isles
-			if poiInfo then
-				addTitle(poiInfo.name)
-				local mapInfo = C_Map_GetMapInfo(mapID)
-				local timeLeft = C_AreaPoiInfo_GetAreaPOISecondsLeft(areaPoiID) or 0
-				timeLeft = timeLeft/60
-				if timeLeft < 60 then r,g,b = 1,0,0 else r,g,b = 0,1,0 end
-				GameTooltip:AddDoubleLine(mapInfo.name, GetFormattedTimeLeft(timeLeft), 1,1,1, r,g,b)
-				break
-			end
-		end
-	
-		-- Community feast
-		title = false
-		local feastTime = communityFeastTime[region]
-		if feastTime then
-			local currentTime = time()
-			local duration = 5400 -- 1.5hrs
-			local elapsed = mod(currentTime - feastTime, duration)
-			local nextTime = duration - elapsed + currentTime
-	
-			addTitle(COMMUNITY_FEAST)
-			if currentTime - (nextTime-duration) < 900 then r,g,b = 0,1,0 else r,g,b = .6,.6,.6 end -- green text if progressing
-			GameTooltip:AddDoubleLine(date("%m/%d %H:%M", nextTime-duration*2), date("%m/%d %H:%M", nextTime-duration), .6,.6,.6, r,g,b)
-			GameTooltip:AddDoubleLine(date("%m/%d %H:%M", nextTime), date("%m/%d %H:%M", nextTime+duration), 1,1,1, 1,1,1)
-		end
-
-		-- Invasions
-		for index, value in ipairs(invIndex) do
-			title = false
-			addTitle(value.title)
-			local timeLeft, zoneName = CheckInvasion(index)
-			local nextTime = GetNextTime(value.baseTime, index)
-			if timeLeft then
-				timeLeft = timeLeft/60
-				if timeLeft < 60 then r,g,b = 1,0,0 else r,g,b = 0,1,0 end
-				GameTooltip:AddDoubleLine(L["Current Invasion"]..zoneName, GetFormattedTimeLeft(timeLeft), 1,1,1, r,g,b)
-			end
-			local nextLocation = GetNextLocation(nextTime, index)
-			GameTooltip:AddDoubleLine(L["Next Invasion"]..nextLocation, date("%m/%d %H:%M", nextTime), 1,1,1, 1,1,1)
-		end
 	else
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine(L["Hold Shift"], .6,.8,1)
 	end
-
+]=]
 	-- Help Info
 	GameTooltip:AddDoubleLine(" ", DB.LineString)
 	GameTooltip:AddDoubleLine(" ", DB.LeftButton..L["Toggle Calendar"].." ", 1,1,1, .6,.8,1)
@@ -444,7 +354,7 @@ info.onMouseUp = function(_, btn)
 			dialog:Hide()
 		end
 	else
-		--if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
+		if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
 		ToggleCalendar()
 	end
 end

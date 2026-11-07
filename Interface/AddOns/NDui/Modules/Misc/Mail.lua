@@ -68,6 +68,7 @@ local contactListByRealm = {}
 
 function M:ContactButton_OnClick()
 	local text = self.name:GetText() or ""
+	text = Ambiguate(text, "none")
 	SendMailNameEditBox:SetText(text)
 	SendMailNameEditBox:SetCursorPosition(0)
 end
@@ -92,7 +93,7 @@ function M:ContactButton_Create(parent, index)
 	button:RegisterForClicks("AnyUp")
 	button:SetScript("OnClick", M.ContactButton_OnClick)
 
-	button.delete = B.CreateButton(button, 20, 20, true, "Interface\\RAIDFRAME\\ReadyCheck-NotReady")
+	button.delete = B.CreateButton(button, 20, 20, true, "Atlas:common-icon-redx")
 	button.delete:SetPoint("LEFT", button, "RIGHT", 2, 0)
 	button.delete.__owner = button
 	button.delete:SetScript("OnClick", M.ContactButton_Delete)
@@ -114,7 +115,7 @@ function M:ContactList_Refresh()
 	wipe(contactListByRealm)
 
 	for fullname, color in pairs(NDuiADB["ContactList"]) do
-		local name, realm = strsplit("-", fullname)
+		local name, realm = strmatch(fullname, "^(.-)%-(.*)$")
 		if realm then
 			if not contactListByRealm[realm] then contactListByRealm[realm] = {} end
 			contactListByRealm[realm][name] = color
@@ -430,35 +431,3 @@ function M:MailBox()
 	M:LastMailSaver()
 end
 M:RegisterMisc("MailBox", M.MailBox)
-
--- Temp fix for GM mails
-function OpenAllMail:AdvanceToNextItem()
-	local foundAttachment = false
-	while ( not foundAttachment ) do
-		local _, _, _, _, _, CODAmount, _, _, _, _, _, _, isGM = GetInboxHeaderInfo(self.mailIndex)
-		local itemID = select(2, GetInboxItem(self.mailIndex, self.attachmentIndex))
-		local hasBlacklistedItem = self:IsItemBlacklisted(itemID)
-		local hasCOD = CODAmount and CODAmount > 0
-		local hasMoneyOrItem = C_Mail.HasInboxMoney(self.mailIndex) or HasInboxItem(self.mailIndex, self.attachmentIndex)
-		if ( not hasBlacklistedItem and not isGM and not hasCOD and hasMoneyOrItem ) then
-			foundAttachment = true
-		else
-			self.attachmentIndex = self.attachmentIndex - 1
-			if ( self.attachmentIndex == 0 ) then
-				break
-			end
-		end
-	end
-
-	if ( not foundAttachment ) then
-		self.mailIndex = self.mailIndex + 1
-		self.attachmentIndex = ATTACHMENTS_MAX
-		if ( self.mailIndex > GetInboxNumItems() ) then
-			return false
-		end
-
-		return self:AdvanceToNextItem()
-	end
-
-	return true
-end

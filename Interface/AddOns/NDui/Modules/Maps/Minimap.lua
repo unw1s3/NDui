@@ -1,13 +1,11 @@
 ﻿local _, ns = ...
 local B, C, L, DB = unpack(ns)
-local oUF = ns.oUF
 local module = B:GetModule("Maps")
 
 local _G = _G
 local select, pairs, unpack, next, tinsert = select, pairs, unpack, next, tinsert
 local strmatch, strfind, strupper = strmatch, strfind, strupper
 local UIFrameFadeOut, UIFrameFadeIn = UIFrameFadeOut, UIFrameFadeIn
-local C_Timer_After = C_Timer.After
 local cr, cg, cb = DB.r, DB.g, DB.b
 
 function module:CreatePulse()
@@ -26,21 +24,14 @@ function module:CreatePulse()
 	anim.fader:SetSmoothing("OUT")
 
 	local function updateMinimapAnim(event)
-		if event == "PLAYER_REGEN_DISABLED" then
-			bg:SetBackdropBorderColor(1, 0, 0)
+		if C_Calendar.GetNumPendingInvites() > 0 or MinimapMailFrame:IsShown() then
+			bg:SetBackdropBorderColor(1, 1, 0)
 			anim:Play()
-		elseif not InCombatLockdown() then
-			if C_Calendar.GetNumPendingInvites() > 0 or MinimapMailFrame:IsShown() then
-				bg:SetBackdropBorderColor(1, 1, 0)
-				anim:Play()
-			else
-				anim:Stop()
-				bg:SetBackdropBorderColor(0, 0, 0)
-			end
+		else
+			anim:Stop()
+			bg:SetBackdropBorderColor(0, 0, 0)
 		end
 	end
-	B:RegisterEvent("PLAYER_REGEN_ENABLED", updateMinimapAnim)
-	B:RegisterEvent("PLAYER_REGEN_DISABLED", updateMinimapAnim)
 	B:RegisterEvent("CALENDAR_UPDATE_PENDING_INVITES", updateMinimapAnim)
 	B:RegisterEvent("UPDATE_PENDING_MAIL", updateMinimapAnim)
 
@@ -52,7 +43,7 @@ function module:CreatePulse()
 end
 
 local function ToggleLandingPage(_, ...)
-	--if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
+	if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
 	if not C_Garrison.HasGarrison(...) then
 		UIErrorsFrame:AddMessage(DB.InfoColor..CONTRIBUTION_TOOLTIP_UNLOCKED_WHEN_ACTIVE)
 		return
@@ -213,8 +204,8 @@ function module:ReskinRegions()
 
 	Invt:SetScript("OnClick", function(_, btn)
 		Invt:Hide()
-		--if btn == "LeftButton" and not InCombatLockdown() then -- fix by LibShowUIPanel
-		if btn == "LeftButton" then
+		if btn == "LeftButton" and not InCombatLockdown() then -- fix by LibShowUIPanel
+		--if btn == "LeftButton" then
 			ToggleCalendar()
 		end
 		B:UnregisterEvent("CALENDAR_UPDATE_PENDING_INVITES", updateInviteVisibility)
@@ -292,14 +283,18 @@ function module:RecycleBin()
 	local function clickFunc(force)
 		if force == 1 or NDuiADB["AutoRecycle"] then
 			UIFrameFadeOut(bin, .5, 1, 0)
-			C_Timer_After(.5, hideBinButton)
+			C_Timer.After(.5, hideBinButton)
 		end
 	end
 
 	local ignoredButtons = {
-		["GatherMatePin"] = true,
-		["HandyNotes.-Pin"] = true,
-		["TTMinimapButton"] = true,
+		["^GatherMate"] = true,
+		["^HandyNotes"] = true,
+		["^HereBeDragons"] = true,
+		["^Questie"] = true,
+		["^TomTom"] = true,
+		["^pin"] = true,
+		["^Pin"] = true,
 	}
 	B.SplitList(ignoredButtons, NDuiADB["IgnoredButtons"])
 
@@ -313,12 +308,12 @@ function module:RecycleBin()
 
 	local isGoodLookingIcon = {
 		["Narci_MinimapButton"] = true,
+		["ArcUIv2MinimapButton"] = true,
 	}
 
 	local iconsPerRow = 10
 	local rowMult = iconsPerRow/2 - 1
-	local currentIndex, pendingTime, timeThreshold = 0, 5, 12
-	local buttons, numMinimapChildren = {}, 0
+	local buttons = {}
 	local removedTextures = {
 		[136430] = true,
 		[136467] = true,
@@ -337,7 +332,8 @@ function module:RecycleBin()
 					region:ClearAllPoints()
 					region:SetAllPoints()
 				end
-				if not isGoodLookingIcon[name] then
+				local hasMask = region.GetNumMaskTextures and region:GetNumMaskTextures() > 0
+				if not isGoodLookingIcon[name] and not hasMask then
 					region:SetTexCoord(unpack(DB.TexCoord))
 				end
 			end
@@ -384,28 +380,18 @@ function module:RecycleBin()
 	end
 
 	local function CollectRubbish()
-		local numChildren = Minimap:GetNumChildren()
-		if numChildren ~= numMinimapChildren then
-			for i = 1, numChildren do
-				local child = select(i, Minimap:GetChildren())
-				local name = child and child.GetName and child:GetName()
-				if name and not child.isExamed and not blackList[name] then
-					if (child:IsObjectType("Button") or strmatch(strupper(name), "BUTTON")) and not isButtonIgnored(name) then
-						ReskinMinimapButton(child, name)
-					end
-					child.isExamed = true
+		local children = {Minimap:GetChildren()}
+		for _, child in pairs(children) do
+			local name = child and child.GetName and child:GetName()
+			if name and not child.isExamed and not blackList[name] then
+				if (child:IsObjectType("Button") or strmatch(strupper(name), "BUTTON") or strmatch(name, "^LibDBIcon10_")) and not isButtonIgnored(name) then
+					ReskinMinimapButton(child, name)
 				end
+				child.isExamed = true
 			end
-
-			numMinimapChildren = numChildren
 		end
 
 		KillMinimapButtons()
-
-		currentIndex = currentIndex + 1
-		if currentIndex < timeThreshold then
-			C_Timer_After(pendingTime, CollectRubbish)
-		end
 	end
 
 	local shownButtons = {}
@@ -453,7 +439,22 @@ function module:RecycleBin()
 		end
 	end)
 
-	CollectRubbish()
+	local isCollecting = false
+
+	local function startCollect()
+		CollectRubbish()
+		isCollecting = false
+	end
+
+	local function delayCollect()
+		if isCollecting then return end
+		isCollecting = true
+		C_Timer.After(.1, startCollect)
+	end
+
+	delayCollect()
+	C_Timer.After(5, delayCollect) -- in case some buttons are loaded after PLAYER_ENTERING_WORLD
+	B:RegisterEvent("ADDON_LOADED", delayCollect)
 end
 
 function module:WhoPingsMyMap()
@@ -509,7 +510,7 @@ end
 
 function module:ShowMinimapClock()
 	if C.db["Map"]["Clock"] then
-		if not TimeManagerClockButton then LoadAddOn("Blizzard_TimeManager") end
+		if not TimeManagerClockButton then C_AddOns.LoadAddOn("Blizzard_TimeManager") end
 		if not TimeManagerClockButton.styled then
 			TimeManagerClockButton:DisableDrawLayer("BORDER")
 			TimeManagerClockButton:ClearAllPoints()
@@ -553,7 +554,7 @@ function module:ShowCalendar()
 end
 
 local function GetVolumeColor(cur)
-	local r, g, b = oUF:RGBColorGradient(cur, 100, 1, 1, 1, 1, .8, 0, 1, 0, 0)
+	local r, g, b = B:RGBColorGradient(cur, 100, 1, 1, 1, 1, .8, 0, 1, 0, 0)
 	return r, g, b
 end
 
@@ -607,7 +608,7 @@ end
 
 function module:Minimap_OnMouseUp(btn)
 	if btn == "MiddleButton" then
-		--if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
+		if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
 		ToggleCalendar()
 	elseif btn == "RightButton" then
 		local button = MinimapCluster.Tracking.Button
@@ -618,8 +619,6 @@ function module:Minimap_OnMouseUp(btn)
 				button.menu:SetPoint("CENTER", self, -100, 100)
 			end
 		end
-	else
-		Minimap:OnClick()
 	end
 end
 
@@ -676,13 +675,15 @@ function module:SetupMinimap()
 	self:ShowCalendar()
 
 	-- Minimap clicks
-	Minimap:EnableMouseWheel(true)
-	Minimap:SetScript("OnMouseWheel", module.Minimap_OnMouseWheel)
-	Minimap:SetScript("OnMouseUp", module.Minimap_OnMouseUp)
+	local clicker = CreateFrame("Frame", "NDui_MinimapClicker", Minimap)
+	clicker:SetPassThroughButtons("LeftButton")
+	clicker:SetPropagateMouseMotion(true)
+	clicker:SetAllPoints()
+	clicker:SetScript("OnMouseWheel", module.Minimap_OnMouseWheel)
+	clicker:SetScript("OnMouseUp", module.Minimap_OnMouseUp)
 
 	-- Hide Blizz
 	MinimapCluster:EnableMouse(false)
-	MinimapCluster.BorderTop:Hide()
 	MinimapCluster.ZoneTextButton:Hide()
 	Minimap:SetArchBlobRingScalar(0)
 	Minimap:SetQuestBlobRingScalar(0)
@@ -692,14 +693,23 @@ function module:SetupMinimap()
 
 	_G.MinimapCluster.Tracking:SetAlpha(0)
 	_G.MinimapCluster.Tracking:SetScale(0.0001)
+	_G.MinimapCluster.DielFrame:SetAlpha(0)
 
+	-- Housing overlay
+	if MinimapBackdrop.StaticOverlayTexture then
+		MinimapBackdrop.StaticOverlayTexture:SetInside(Minimap)
+		MinimapBackdrop.StaticOverlayTexture:SetTexCoord(.2, .8, .2, .8)
+	end
+	if MinimapBackdrop.ExternalEventURLButton then
+		MinimapBackdrop.ExternalEventURLButton:Hide()
+	end
 
 	-- Add Elements
 	self:CreatePulse()
 	self:RecycleBin()
 	self:BlizzardACF() -- blizz addons collector
 	self:ReskinRegions()
-	self:WhoPingsMyMap()
+	--self:WhoPingsMyMap()
 	self:ShowMinimapHelpInfo()
 	self:SoundVolume()
 

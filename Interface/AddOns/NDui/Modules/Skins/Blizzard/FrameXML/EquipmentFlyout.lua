@@ -11,6 +11,7 @@ tinsert(C.defaultThemes, function()
 		button:SetPushedTexture(0)
 		button:GetHighlightTexture():SetColorTexture(1, 1, 1, .25)
 		button.bg = B.ReskinIcon(button.icon)
+		B:ResetTexCoord(button.icon)
 		B.ReskinIconBorder(button.IconBorder)
 	end)
 

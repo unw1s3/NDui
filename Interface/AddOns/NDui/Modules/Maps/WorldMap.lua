@@ -103,6 +103,10 @@ function module:SetupCoords()
 
 	local CoordsUpdater = CreateFrame("Frame", nil, WorldMapFrame.BorderFrame)
 	CoordsUpdater:SetScript("OnUpdate", module.UpdateCoords)
+
+	-- Disable blizzard's coords
+	C_CVar.SetCVar("worldMapShowPlayerCoords", 0)
+	C_CVar.SetCVar("worldMapShowCursorCoords", 0)
 end
 
 function module:UpdateMapScale()
@@ -286,7 +290,16 @@ function module:SetupWorldMap()
 	self:RemoveMapFog()
 end
 
+function module:MapFunc()
+	WorldMapFrame:SetAttribute("UIPanelLayout-area", nil)
+	WorldMapFrame:SetAttribute("UIPanelLayout-enabled", false)
+	WorldMapFrame:SetAttribute("UIPanelLayout-allowOtherPanels", true)
+	tinsert(UISpecialFrames, "WorldMapFrame")
+	B:UnregisterEvent("PLAYER_ENTERING_WORLD", self.MapFunc)
+end
+
 function module:OnLogin()
 	self:SetupWorldMap()
 	self:SetupMinimap()
+	B:RegisterEvent("PLAYER_ENTERING_WORLD", self.MapFunc)
 end

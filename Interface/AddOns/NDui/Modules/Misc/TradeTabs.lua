@@ -2,12 +2,11 @@ local _, ns = ...
 local B, C, L, DB = unpack(ns)
 local M = B:GetModule("Misc")
 
-local pairs, unpack, tinsert, select = pairs, unpack, tinsert, select
+local pairs, unpack, tinsert = pairs, unpack, tinsert
 local GetSpellBookItemInfo = C_SpellBook and C_SpellBook.GetSpellBookItemInfo or GetSpellBookItemInfo
-local IsPlayerSpell, UseItemByName = IsPlayerSpell, UseItemByName
+local IsPlayerSpell = IsPlayerSpell
 local GetProfessions, GetProfessionInfo = GetProfessions, GetProfessionInfo
 local PlayerHasToy, C_ToyBox_GetToyInfo = PlayerHasToy, C_ToyBox.GetToyInfo
-local C_TradeSkillUI_GetRecipeInfo, C_TradeSkillUI_GetTradeSkillLine = C_TradeSkillUI.GetRecipeInfo, C_TradeSkillUI.GetTradeSkillLine
 local C_TradeSkillUI_GetOnlyShowSkillUpRecipes, C_TradeSkillUI_SetOnlyShowSkillUpRecipes = C_TradeSkillUI.GetOnlyShowSkillUpRecipes, C_TradeSkillUI.SetOnlyShowSkillUpRecipes
 local C_TradeSkillUI_GetOnlyShowMakeableRecipes, C_TradeSkillUI_SetOnlyShowMakeableRecipes = C_TradeSkillUI.GetOnlyShowMakeableRecipes, C_TradeSkillUI.SetOnlyShowMakeableRecipes
 
@@ -48,9 +47,7 @@ function M:UpdateProfessions()
 				local slotID = i + spelloffset
 				if not C_SpellBook.IsSpellBookItemPassive(slotID, BOOKTYPE_PROFESSION) then
 					local spellID = GetSpellBookItemInfo(slotID, BOOKTYPE_PROFESSION).spellID
-					if i == 1 then
-						M:TradeTabs_Create(spellID)
-					else
+					if spellID then
 						M:TradeTabs_Create(spellID)
 					end
 				end
@@ -79,16 +76,19 @@ function M:TradeTabs_Update()
 			tab.cover:Hide()
 		end
 
-		local start, duration
 		if itemID then
-			start, duration = C_Item.GetItemCooldown(itemID)
+			local start, duration = C_Item.GetItemCooldown(itemID)
+			if start and duration > 0 then
+				tab.CD:SetCooldown(start, duration)
+			end
 		else
 			local cooldownInfo = C_Spell.GetSpellCooldown(spellID)
-			start = cooldownInfo and cooldownInfo.startTime
-			duration = cooldownInfo and cooldownInfo.duration
-		end
-		if start and duration and duration > 1.5 then
-			tab.CD:SetCooldown(start, duration)
+			if cooldownInfo and cooldownInfo.isActive then
+				local durationObject = C_Spell.GetSpellCooldownDuration(spellID)
+				if durationObject then
+					tab.CD:SetCooldownFromDurationObject(durationObject)
+				end
+			end
 		end
 	end
 end
@@ -142,7 +142,7 @@ function M:TradeTabs_Create(spellID, toyID, itemID)
 	tab.cover:SetAllPoints()
 	tab.cover:EnableMouse(true)
 
-	tab:SetPoint("TOPLEFT", ProfessionsFrame, "TOPRIGHT", 3, -index*42)
+	tab:SetPoint("TOPLEFT", ProfessionsFrame, "TOPRIGHT", 3, -index*42-80)
 	tinsert(tabList, tab)
 	index = index + 1
 end
@@ -150,7 +150,7 @@ end
 function M:TradeTabs_FilterIcons()
 	local buttonList = {
 		[1] = {"Atlas:bags-greenarrow", TRADESKILL_FILTER_HAS_SKILL_UP, C_TradeSkillUI_GetOnlyShowSkillUpRecipes, C_TradeSkillUI_SetOnlyShowSkillUpRecipes},
-		[2] = {"Interface\\RAIDFRAME\\ReadyCheck-Ready", CRAFT_IS_MAKEABLE, C_TradeSkillUI_GetOnlyShowMakeableRecipes, C_TradeSkillUI_SetOnlyShowMakeableRecipes},
+		[2] = {"Atlas:common-icon-checkmark", CRAFT_IS_MAKEABLE, C_TradeSkillUI_GetOnlyShowMakeableRecipes, C_TradeSkillUI_SetOnlyShowMakeableRecipes},
 	}
 
 	local function filterClick(self)
@@ -227,4 +227,4 @@ function M:TradeTabs()
 		end)
 	end
 end
-M:RegisterMisc("TradeTabs", M.TradeTabs)
+--M:RegisterMisc("TradeTabs", M.TradeTabs)

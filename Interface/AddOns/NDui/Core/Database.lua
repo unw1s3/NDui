@@ -3,18 +3,18 @@ local B, C, L, DB = unpack(ns)
 
 local bit_band, bit_bor = bit.band, bit.bor
 local COMBATLOG_OBJECT_AFFILIATION_MINE = COMBATLOG_OBJECT_AFFILIATION_MINE or 0x00000001
-local GetSpecialization, GetSpecializationInfo = GetSpecialization, GetSpecializationInfo
+local GetSpecialization = C_SpecializationInfo.GetSpecialization
+local GetSpecializationInfo = C_SpecializationInfo.GetSpecializationInfo
 
 DB.Version = C_AddOns.GetAddOnMetadata("NDui", "Version")
 DB.Support = C_AddOns.GetAddOnMetadata("NDui", "X-Support")
 DB.Client = GetLocale()
 DB.ScreenWidth, DB.ScreenHeight = GetPhysicalScreenSize()
-DB.isNewPatch = select(4, GetBuildInfo()) >= 110100 -- 11.1.0
-DB.isWW = select(4, GetBuildInfo()) >= 110000 -- 11.0.0
+DB.isNewPatch = select(4, GetBuildInfo()) >= 120100 -- 12.0.1
 
 -- Deprecated
-if DB.isWW then -- FIXME
-	local function EasyMenu_Initialize( frame, level, menuList )
+do
+	local function EasyMenu_Initialize( _, level, menuList )
 		for index = 1, #menuList do
 			local value = menuList[index]
 			if (value.text) then
@@ -34,9 +34,9 @@ if DB.isWW then -- FIXME
 end
 
 -- Colors
-DB.MyName = UnitName("player")
-DB.MyRealm = GetRealmName()
-DB.MyFullName = DB.MyName.."-"..DB.MyRealm
+DB.MyName, DB.MyRealm = UnitName("player")
+--DB.MyRealm = GetRealmName()
+DB.MyFullName = DB.MyName.." "..DB.MyRealm
 DB.MyClass = select(2, UnitClass("player"))
 DB.MyFaction = UnitFactionGroup("player")
 DB.ClassList = {}
@@ -46,17 +46,9 @@ end
 for k, v in pairs(LOCALIZED_CLASS_NAMES_FEMALE) do
 	DB.ClassList[v] = k
 end
-DB.ClassColors = {}
-local colors = CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS
-for class, value in pairs(colors) do
-	DB.ClassColors[class] = {}
-	DB.ClassColors[class].r = value.r
-	DB.ClassColors[class].g = value.g
-	DB.ClassColors[class].b = value.b
-	DB.ClassColors[class].colorStr = value.colorStr
-end
-DB.r, DB.g, DB.b = DB.ClassColors[DB.MyClass].r, DB.ClassColors[DB.MyClass].g, DB.ClassColors[DB.MyClass].b
-DB.MyColor = format("|cff%02x%02x%02x", DB.r*255, DB.g*255, DB.b*255)
+local playerClassColor = C_ClassColor.GetClassColor(DB.MyClass)
+DB.r, DB.g, DB.b = playerClassColor:GetRGB()
+DB.MyColor = playerClassColor:GenerateHexColorMarkup()
 DB.InfoColor = "|cff99ccff" --.6,.8,1
 DB.GreyColor = "|cff7b8489"
 DB.QualityColors = {}
@@ -80,10 +72,12 @@ DB.bdTex = "Interface\\ChatFrame\\ChatFrameBackground"
 DB.glowTex = Media.."glowTex"
 DB.normTex = Media.."normTex"
 DB.gradTex = Media.."gradTex"
+DB.classGradientTex = Media.."Inner-Shadow"
 DB.flatTex = Media.."flatTex"
 DB.bgTex = Media.."bgTex"
 DB.pushedTex = Media.."pushed"
 DB.arrowTex = Media.."TargetArrow"
+DB.barArrow = Media.."Arrows.png"
 DB.starTex = Media.."Hutu\\star"
 DB.flagTex = Media.."Hutu\\flag"
 DB.MicroTex = Media.."Hutu\\Menu\\"
@@ -93,7 +87,6 @@ DB.closeTex = Media.."Hutu\\close"
 DB.ArrowUp = Media.."Hutu\\arrow"
 DB.afdianTex = Media.."Hutu\\Afdian"
 DB.patreonTex = Media.."Hutu\\Patreon"
-DB.sponsorTex = Media.."Hutu\\Sponsor"
 DB.curseforgeTex = Media.."Hutu\\CURSEFORGE"
 DB.boxTex = Media.."Hutu\\Box"
 DB.mailTex = "Interface\\Minimap\\Tracking\\Mailbox"
@@ -182,14 +175,6 @@ DB.ReminderBuffs = {
 			instance = true,
 			disable = true, -- 禁用直到出了新符文
 		},
-		{	itemID = 194307, -- 巢穴守护者的诺言
-			spells = {
-				[394457] = true,
-			},
-			equip = true,
-			instance = true,
-			inGroup = true,
-		},
 		--[=[
 		{	itemID = 178742, -- 瓶装毒素饰品
 			spells = {
@@ -199,26 +184,9 @@ DB.ReminderBuffs = {
 			instance = true,
 			combat = true,
 		},
-		{	itemID = 190958, -- 究极秘术
-			spells = {
-				[368512] = true,
-			},
-			equip = true,
-			instance = true,
-			inGroup = true,
-		},
 		]=]
 	},
 	MAGE = {
-		{	spells = {	-- 奥术魔宠
-				[210126] = true,
-			},
-			depend = 205022,
-			spec = 1,
-			combat = true,
-			instance = true,
-			pvp = true,
-		},
 		{	spells = {	-- 奥术智慧
 				[1459] = true,
 			},
@@ -244,20 +212,9 @@ DB.ReminderBuffs = {
 	},
 	SHAMAN = {
 		{	spells = {
-				[192106] = true,	-- 闪电之盾
-				[974] = true,		-- 大地之盾
-				[383648] = true,	-- 大地之盾
-				[52127] = true,		-- 水之护盾
+				[319773] = true,		-- 风怒武器
 			},
-			depend = 192106,
-			combat = true,
-			instance = true,
-			pvp = true,
-		},
-		{	spells = {
-				[33757] = true,		-- 风怒武器
-			},
-			depend = 33757,
+			depend = 319773,
 			combat = true,
 			instance = true,
 			pvp = true,
@@ -265,9 +222,9 @@ DB.ReminderBuffs = {
 			spec = 2,
 		},
 		{	spells = {
-				[318038] = true,	-- 火舌武器
+				[319778] = true,	-- 火舌武器
 			},
-			depend = 318038,
+			depend = 319778,
 			combat = true,
 			instance = true,
 			pvp = true,

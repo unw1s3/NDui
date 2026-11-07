@@ -21,18 +21,12 @@ local _, ns = ...
 local cargBags = ns.cargBags
 
 local _G = _G
-local ReagentButtonInventorySlot = _G.ReagentButtonInventorySlot
-local ButtonInventorySlot = _G.ButtonInventorySlot
-local BANK_CONTAINER = BANK_CONTAINER or -1
-local REAGENTBANK_CONTAINER = REAGENTBANK_CONTAINER or -3
-local ACCOUNTBANK_CONTAINERS = {
-	[Enum.BagIndex.AccountBankTab_1 or 13] = true,
-	[Enum.BagIndex.AccountBankTab_2 or 14] = true,
-	[Enum.BagIndex.AccountBankTab_3 or 15] = true,
-	[Enum.BagIndex.AccountBankTab_4 or 16] = true,
-	[Enum.BagIndex.AccountBankTab_5 or 17] = true,
-}
-local SplitContainerItem = C_Container.SplitContainerItem
+local BANK_SLOTS = {}
+for _, bags in ipairs({cargBags.BagStrings.bank, cargBags.BagStrings.accountbank}) do
+	for _, bagID in ipairs(bags) do
+		BANK_SLOTS[bagID] = true
+	end
+end
 
 --[[!
 	@class ItemButton
@@ -47,15 +41,8 @@ local ItemButton = cargBags:NewClass("ItemButton", nil, "ItemButton")
 ]]
 function ItemButton:GetTemplate(bagID)
 	bagID = bagID or self.bagId
-	return (bagID == REAGENTBANK_CONTAINER and "ReagentBankItemButtonGenericTemplate")
-		or (bagID == BANK_CONTAINER and "BankItemButtonGenericTemplate")
-		or (bagID and "ContainerFrameItemButtonTemplate")
-		or "",
-		(bagID == REAGENTBANK_CONTAINER and ReagentBankFrame)
-		or (bagID == BANK_CONTAINER and BankFrame)
-		or (bagID and _G["ContainerFrame"..(bagID + 1)])
-		or (ACCOUNTBANK_CONTAINERS[bagID] and AccountBankPanel)
-		or ""
+	return (bagID and "ContainerFrameItemButtonTemplate") or "",
+		(BANK_SLOTS[bagID] and BankFrame.BankPanel) or (bagID and _G["ContainerFrame"..(bagID + 1)]) or ""
 end
 
 local mt_gen_key = {__index = function(self,k) self[k] = {}; return self[k]; end}
@@ -66,14 +53,6 @@ local mt_gen_key = {__index = function(self,k) self[k] = {}; return self[k]; end
 	@param slotID <number>
 	@return button <ItemButton>
 ]]
-local function BankSplitStack(button, split)
-	SplitContainerItem(BANK_CONTAINER, button:GetID(), split)
-end
-
-local function ReagenBankSplitStack(button, split)
-	SplitContainerItem(REAGENTBANK_CONTAINER, button:GetID(), split)
-end
-
 function ItemButton:New(bagID, slotID)
 	self.recycled = self.recycled or setmetatable({}, mt_gen_key)
 
@@ -86,17 +65,6 @@ function ItemButton:New(bagID, slotID)
 	button:Show()
 	button:HookScript("OnEnter", button.ButtonOnEnter)
 	button:HookScript("OnLeave", button.ButtonOnLeave)
-	if bagID == REAGENTBANK_CONTAINER then
-		button.GetInventorySlot = ReagentButtonInventorySlot
-		button.UpdateTooltip = BankFrameItemButton_OnEnter
-		button.SplitStack = ReagenBankSplitStack
-	elseif bagID == BANK_CONTAINER then
-		button.GetInventorySlot = ButtonInventorySlot
-		button.UpdateTooltip = BankFrameItemButton_OnEnter
-		button.SplitStack = BankSplitStack
-	else
-		button.UpdateTooltip = ContainerFrameItemButtonMixin.OnUpdate
-	end
 
 	return button
 end
@@ -108,12 +76,21 @@ end
 	@callback button:OnCreate(tpl)
 ]]
 
+local allButtons = {}
+local function GetButton(slot, name, tpl)
+	if not allButtons[slot] then
+		allButtons[slot] = CreateFrame("ItemButton", name, nil, tpl..", BackdropTemplate")
+	end
+	return allButtons[slot]
+end
+
 function ItemButton:Create(tpl, parent)
 	local impl = self.implementation
 	impl.numSlots = (impl.numSlots or 0) + 1
 	local name = ("%sSlot%d"):format(impl.name, impl.numSlots)
 
-	local button = setmetatable(CreateFrame("ItemButton", name, parent, tpl..", BackdropTemplate"), self.__index)
+	local button = setmetatable(GetButton(impl.numSlots, name, tpl), self.__index)
+	button:SetParent(parent or UIParent)
 
 	if(button.Scaffold) then button:Scaffold(tpl) end
 	if(button.OnCreate) then button:OnCreate(tpl) end
@@ -121,13 +98,12 @@ function ItemButton:Create(tpl, parent)
 	local btnNT = _G[button:GetName().."NormalTexture"]
 	local btnNIT = button.NewItemTexture
 	local btnBIT = button.BattlepayItemTexture
-	local btnICO = button.ItemContextOverlay
 	if btnNT then btnNT:SetTexture("") end
 	if btnNIT then btnNIT:SetTexture("") end
 	if btnBIT then btnBIT:SetTexture("") end
-	if btnICO then btnICO:SetTexture("") end
 
 	button:RegisterForDrag("LeftButton") -- fix button drag in 9.0
+	button.UpdateTooltip = ContainerFrameItemButtonMixin.OnUpdate
 
 	return button
 end

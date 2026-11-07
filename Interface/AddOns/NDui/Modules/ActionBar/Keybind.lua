@@ -9,7 +9,7 @@ local GetSpellBookItemName = C_SpellBook and C_SpellBook.GetSpellBookItemName or
 local GetMacroInfo = GetMacroInfo
 local IsAltKeyDown, IsControlKeyDown, IsShiftKeyDown = IsAltKeyDown, IsControlKeyDown, IsShiftKeyDown
 local GetBindingKey, GetBindingName, SetBinding, SaveBindings, LoadBindings = GetBindingKey, GetBindingName, SetBinding, SaveBindings, LoadBindings
-local MAX_ACCOUNT_MACROS = MAX_ACCOUNT_MACROS
+local MAX_ACCOUNT_MACROS = (Constants.MacroConsts and Constants.MacroConsts.MAX_ACCOUNT_MACROS) or _G.MAX_ACCOUNT_MACROS
 local NOT_BOUND, PRESS_KEY_TO_BIND, QUICK_KEYBIND_DESCRIPTION = NOT_BOUND, PRESS_KEY_TO_BIND, QUICK_KEYBIND_DESCRIPTION
 
 -- Button types
@@ -210,13 +210,14 @@ function Bar:Bind_Listener(key)
 	local alt = IsAltKeyDown() and "ALT-" or ""
 	local ctrl = IsControlKeyDown() and "CTRL-" or ""
 	local shift = IsShiftKeyDown() and "SHIFT-" or ""
+	local meta = IsMetaKeyDown() and "META-" or ""
 
 	if not frame.spellmacro or frame.spellmacro == "PET" or frame.spellmacro == "STANCE" then
-		SetBinding(alt..ctrl..shift..key, frame.bindstring)
+		SetBinding(alt..ctrl..shift..meta..key, frame.bindstring)
 	else
-		SetBinding(alt..ctrl..shift..key, frame.spellmacro.." "..frame.name)
+		SetBinding(alt..ctrl..shift..meta..key, frame.spellmacro.." "..frame.name)
 	end
-	print((frame.tipName or frame.name).." |cff00ff00"..L["KeyBoundTo"].."|r "..alt..ctrl..shift..key)
+	print((frame.tipName or frame.name).." |cff00ff00"..L["KeyBoundTo"].."|r "..alt..ctrl..shift..meta..key)
 
 	Bar:Bind_Update(frame.button, frame.spellmacro)
 end

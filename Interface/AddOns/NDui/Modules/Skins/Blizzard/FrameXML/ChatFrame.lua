@@ -1,6 +1,5 @@
 local _, ns = ...
 local B, C, L, DB = unpack(ns)
-local r, g, b = DB.r, DB.g, DB.b
 
 local function ReskinChatScroll(self)
 	B.ReskinTrimScroll(self.ScrollBar)
@@ -22,13 +21,6 @@ tinsert(C.defaultThemes, function()
 
 	TimeAlertFrame:SetBackdrop(nil)
 	B.SetBD(TimeAlertFrame)
-
-	-- Battletag invite frame
-	local border, send, cancel = BattleTagInviteFrame:GetChildren()
-	border:Hide()
-	B.Reskin(send)
-	B.Reskin(cancel)
-	B.SetBD(BattleTagInviteFrame)
 
 	local friendTex = "Interface\\HELPFRAME\\ReportLagIcon-Chat"
 	local queueTex = "Interface\\HELPFRAME\\HelpIcon-ItemRestoration"
@@ -111,11 +103,13 @@ tinsert(C.defaultThemes, function()
 
 	-- VoiceActivityManager
 	hooksecurefunc(VoiceActivityManager, "LinkFrameNotificationAndGuid", function(_, _, notification, guid)
+		if C_ChatInfo.InChatMessagingLockdown() then return end
+
 		local class = select(2, GetPlayerInfoByGUID(guid))
 		if class then
-			local color = DB.ClassColors[class]
-			if notification.Name then
-				notification.Name:SetTextColor(color.r, color.g, color.b)
+			local color = C_ClassColor.GetClassColor(class)
+			if color and notification.Name then
+				notification.Name:SetTextColor(color:GetRGB())
 			end
 		end
 	end)

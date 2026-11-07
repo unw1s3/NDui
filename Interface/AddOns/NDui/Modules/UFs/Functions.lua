@@ -3,28 +3,38 @@ local B, C, L, DB = unpack(ns)
 
 local oUF = ns.oUF
 local UF = B:RegisterModule("UnitFrames")
-local AURA = B:GetModule("Auras")
+local Cooldown = B:GetModule("Cooldown")
 
-local format, floor = string.format, math.floor
 local pairs, next, unpack = pairs, next, unpack
-local UnitGUID, IsItemInRange = UnitGUID, IsItemInRange
+local max, min = math.max, math.min
 local UnitFrame_OnEnter, UnitFrame_OnLeave = UnitFrame_OnEnter, UnitFrame_OnLeave
-local SpellGetVisibilityInfo, UnitAffectingCombat, SpellIsSelfBuff, SpellIsPriorityAura = SpellGetVisibilityInfo, UnitAffectingCombat, SpellIsSelfBuff, SpellIsPriorityAura
 local x1, x2, y1, y2 = unpack(DB.TexCoord)
 
 -- Custom colors
-oUF.colors.smooth = {1, 0, 0, .85, .8, .45, .1, .1, .1}
-oUF.colors.debuff.none = {0, 0, 0}
+oUF.colors.health:SetCurve({
+	[ 0] = CreateColor(1, 0, 0),
+	[.5] = CreateColor(.85, .8, .45),
+	[ 1] = CreateColor(.1, .1, .1),
+})
+oUF.colors.dispel.None = oUF:CreateColor(0, 0, 0)
 
-local function ReplacePowerColor(name, index, color)
-	oUF.colors.power[name] = color
+local UNITFRAME_AURA_DISPEL_COLORS = {}
+for dispelName, color in pairs(oUF.colors.dispel) do
+	UNITFRAME_AURA_DISPEL_COLORS[dispelName] = color
+end
+UNITFRAME_AURA_DISPEL_COLORS.None = oUF:CreateColor(.2, 0, 0)
+UNITFRAME_AURA_DISPEL_COLORS.Bleed = oUF:CreateColor(.95, .05, .05)
+UNITFRAME_AURA_DISPEL_COLORS.Disease = oUF:CreateColor(1, .7, 0)
+
+local function ReplacePowerColor(name, index, r, g, b)
+	oUF.colors.power[name] = oUF:CreateColor(r, g, b)
 	oUF.colors.power[index] = oUF.colors.power[name]
 end
-ReplacePowerColor("MANA", 0, {0, .4, 1})
-ReplacePowerColor("SOUL_SHARDS", 7, {.58, .51, .79})
-ReplacePowerColor("HOLY_POWER", 9, {.88, .88, .06})
-ReplacePowerColor("CHI", 12, {0, 1, .59})
-ReplacePowerColor("ARCANE_CHARGES", 16, {.41, .8, .94})
+ReplacePowerColor("MANA", 0, 0, .4, 1)
+ReplacePowerColor("SOUL_SHARDS", 7, .58, .51, .79)
+ReplacePowerColor("HOLY_POWER", 9, .88, .88, .06)
+ReplacePowerColor("CHI", 12, 0, 1, .59)
+ReplacePowerColor("ARCANE_CHARGES", 16, .41, .8, .94)
 
 -- Various values
 local function retVal(self, val1, val2, val3, val4, val5)
@@ -45,9 +55,20 @@ local function retVal(self, val1, val2, val3, val4, val5)
 end
 
 -- Elements
+UF.smoothbars = {}
+function UF:SmoothBar(bar)
+	bar.smoothing = NDuiADB["SmoothBars"] and Enum.StatusBarInterpolation.ExponentialEaseOut or Enum.StatusBarInterpolation.Immediate
+	UF.smoothbars[bar] = true
+end
+
 local function UF_OnEnter(self)
 	if not self.disableTooltip then
-		UnitFrame_OnEnter(self)
+		local unit = self.__unit
+		if unit then
+			-- Blizzard's unit tooltip helpers still read the public unit field.
+			self.unit = unit
+			UnitFrame_OnEnter(self)
+		end
 	end
 	self.Highlight:Show()
 end
@@ -57,6 +78,12 @@ local function UF_OnLeave(self)
 		UnitFrame_OnLeave(self)
 	end
 	self.Highlight:Hide()
+end
+
+function UF:UpdateClickState()
+	self:RegisterForClicks(self.onKeyDown and "AnyDown" or "AnyUp")
+	self.onKeyDown = nil
+	self:UnregisterEvent("PLAYER_REGEN_ENABLED", UF.UpdateClickState, true)
 end
 
 function UF:CreateHeader(self, onKeyDown)
@@ -69,14 +96,21 @@ function UF:CreateHeader(self, onKeyDown)
 	hl:Hide()
 	self.Highlight = hl
 
-	self:RegisterForClicks(onKeyDown and "AnyDown" or "AnyUp")
+	if InCombatLockdown() then
+		self.onKeyDown = onKeyDown
+		self:RegisterEvent("PLAYER_REGEN_ENABLED", UF.UpdateClickState, true)
+	else
+		self:RegisterForClicks(onKeyDown and "AnyDown" or "AnyUp")
+	end
 	self:HookScript("OnEnter", UF_OnEnter)
 	self:HookScript("OnLeave", UF_OnLeave)
 end
 
 local function UpdateHealthColorByIndex(health, index)
-	health.colorClass = (index == 2)
-	health.colorReaction = (index == 2)
+	local useClassGradient = index == 5
+	health.colorClass = (index == 2) or useClassGradient
+	health.colorReaction = (index == 2) or useClassGradient
+	health:SetStatusBarTexture(useClassGradient and DB.classGradientTex or DB.normTex)
 	if health.SetColorTapping then
 		health:SetColorTapping(index == 2)
 	else
@@ -88,9 +122,12 @@ local function UpdateHealthColorByIndex(health, index)
 		health.colorDisconnected = (index == 2)
 	end
 	health.colorSmooth = (index == 3)
+	health.colorHappiness = (DB.MyClass == "HUNTER" and index == 2)
 	if index == 1 then
 		health:SetStatusBarColor(.1, .1, .1)
 		health.bg:SetVertexColor(.6, .6, .6)
+	elseif index == 2 or index == 3 then
+		health.bg:SetVertexColor(0, 0, 0, .7)
 	elseif index == 4 then
 		health:SetStatusBarColor(0, 0, 0, 0)
 	end
@@ -112,34 +149,26 @@ function UF:UpdateHealthBarColor(self, force)
 	end
 end
 
-local endColor = CreateColor(0, 0, 0, .25)
-function UF.HealthPostUpdate(element, unit, cur, max)
+local bgCurve = C_CurveUtil.CreateColorCurve()
+bgCurve:SetType(Enum.LuaCurveType.Linear)
+bgCurve:AddPoint(0.0, CreateColor(1, 0, 0))
+bgCurve:AddPoint(0.5, CreateColor(1, .7, 0))
+bgCurve:AddPoint(1, CreateColor(.7, 1, 0))
+
+function UF.HealthPostUpdate(element, unit)
 	local self = element.__owner
 	local mystyle = self.mystyle
-	local useGradient, useGradientClass
+	local useGradient
 	if mystyle == "PlayerPlate" then
 		-- do nothing
 	elseif mystyle == "raid" then
 		useGradient = C.db["UFs"]["RaidHealthColor"] > 3
-		useGradientClass = C.db["UFs"]["RaidHealthColor"] == 5
 	else
 		useGradient = C.db["UFs"]["HealthColor"] > 3
-		useGradientClass = C.db["UFs"]["HealthColor"] == 5
 	end
 	if useGradient then
-		element.bg:SetVertexColor(self:ColorGradient(cur or 1, max or 1, 1,0,0, 1,.7,0, .7,1,0))
-	end
-	if useGradientClass then
-		local color
-		if UnitIsPlayer(unit) or UnitInPartyIsAI(unit) then
-			local _, class = UnitClass(unit)
-			color = self.colors.class[class]
-		elseif UnitReaction(unit, "player") then
-			color = self.colors.reaction[UnitReaction(unit, "player")]
-		end
-		if color then
-			element:GetStatusBarTexture():SetGradient("HORIZONTAL", CreateColor(color[1], color[2], color[3], .75), endColor)
-		end
+		local color = UnitHealthPercent(unit, true, bgCurve)
+		element.bg:SetVertexColor(color:GetRGB())
 	end
 end
 
@@ -148,6 +177,7 @@ function UF:CreateHealthBar(self)
 	local health = CreateFrame("StatusBar", nil, self)
 	health:SetPoint("TOPLEFT", self)
 	health:SetPoint("TOPRIGHT", self)
+	UF:SmoothBar(health)
 	local healthHeight
 	if mystyle == "PlayerPlate" then
 		healthHeight = C.db["Nameplate"]["PPHealthHeight"]
@@ -168,7 +198,7 @@ function UF:CreateHealthBar(self)
 	health:SetHeight(healthHeight)
 	health:SetStatusBarTexture(DB.normTex)
 	health:SetStatusBarColor(.1, .1, .1)
-	health:SetFrameLevel(self:GetFrameLevel() - 2)
+	health:SetFrameLevel(max(self:GetFrameLevel() - 2, 0))
 
 	self.backdrop = B.SetBD(health, 0)
 	if self.backdrop.__shadow then
@@ -176,14 +206,12 @@ function UF:CreateHealthBar(self)
 		self.backdrop.__shadow:SetFrameLevel(0)
 		self.backdrop.__shadow = nil
 	end
-	B:SmoothBar(health)
 
 	local bg = self:CreateTexture(nil, "BACKGROUND")
 	bg:SetPoint("TOPLEFT", health:GetStatusBarTexture(), "TOPRIGHT", 0, 0)
 	bg:SetPoint("BOTTOMRIGHT", health)
 	bg:SetTexture(DB.bdTex)
 	bg:SetVertexColor(.6, .6, .6)
-	bg.multiplier = .25
 
 	self.Health = health
 	self.Health.bg = bg
@@ -199,14 +227,15 @@ UF.VariousTagIndex = {
 	[4] = "current",
 	[5] = "percent",
 	[6] = "loss",
-	[7] = "losspercent",
+	--[7] = "losspercent",
 }
 
 function UF:UpdateFrameHealthTag()
 	local mystyle = self.mystyle
-	local valueType
+	local valueType, showValue
 	if mystyle == "player" or mystyle == "target" then
 		valueType = UF.VariousTagIndex[C.db["UFs"]["PlayerHPTag"]]
+		showValue = C.db["UFs"]["PlayerAbsorb"] and "[curAbsorb] "
 	elseif mystyle == "focus" then
 		valueType = UF.VariousTagIndex[C.db["UFs"]["FocusHPTag"]]
 	elseif mystyle == "boss" or mystyle == "arena" then
@@ -215,8 +244,7 @@ function UF:UpdateFrameHealthTag()
 		valueType = UF.VariousTagIndex[C.db["UFs"]["PetHPTag"]]
 	end
 
-	local showValue = C.db["UFs"]["PlayerAbsorb"] and mystyle == "player" and "[curAbsorb] " or ""
-	self:Tag(self.healthValue, showValue.."[VariousHP("..valueType..")]")
+	self:Tag(self.healthValue, (showValue or "").."[VariousHP("..valueType..")]")
 	self.healthValue:UpdateTag()
 end
 
@@ -291,7 +319,6 @@ function UF:CreateHealthText(self)
 		name:ClearAllPoints()
 		name:SetPoint("BOTTOMLEFT", self, "TOPLEFT", 0, 5)
 		name:SetPoint("BOTTOMRIGHT", self, "TOPRIGHT", 0, 5)
-		self:Tag(name, "[nplevel][name]")
 	elseif mystyle == "player" or mystyle == "target" then
 		name:SetPoint("LEFT", 3, C.db["UFs"]["PlayerNameOffset"])
 		name:SetWidth(self:GetWidth()*(C.db["UFs"]["PlayerNameOffset"] == 0 and .55 or 1))
@@ -324,7 +351,6 @@ function UF:CreateHealthText(self)
 		hpval:SetScale(C.db["UFs"]["RaidTextScale"])
 	elseif mystyle == "nameplate" then
 		hpval:SetPoint("RIGHT", self, 0, 5)
-		self:Tag(hpval, "[VariousHP(currentpercent)]")
 	else
 		UF.UpdateFrameHealthTag(self)
 	end
@@ -344,6 +370,7 @@ local function UpdatePowerColorByIndex(power, index)
 	else
 		power.colorDisconnected = (index ~= 2)
 	end
+	power.colorHappiness = (DB.MyClass == "HUNTER" and index ~= 2)
 end
 
 function UF:UpdatePowerBarColor(self, force)
@@ -374,6 +401,7 @@ function UF:CreatePowerBar(self)
 	power:SetStatusBarTexture(DB.normTex)
 	power:SetPoint("BOTTOMLEFT", self)
 	power:SetPoint("BOTTOMRIGHT", self)
+	UF:SmoothBar(power)
 	local powerHeight
 	if mystyle == "PlayerPlate" then
 		powerHeight = C.db["Nameplate"]["PPPowerHeight"]
@@ -392,14 +420,13 @@ function UF:CreatePowerBar(self)
 	end
 	power:SetHeight(powerHeight)
 	power.wasHidden = powerHeight == 0
-	power:SetFrameLevel(self:GetFrameLevel() - 2)
+	power:SetFrameLevel(max(self:GetFrameLevel() - 2, 0))
 	power.backdrop = B.CreateBDFrame(power, 0)
-	B:SmoothBar(power)
 
 	local bg = power:CreateTexture(nil, "BACKGROUND")
 	bg:SetAllPoints()
 	bg:SetTexture(DB.normTex)
-	bg.multiplier = .25
+	bg:SetVertexColor(0, 0, 0, .7)
 
 	self.Power = power
 	self.Power.bg = bg
@@ -519,16 +546,6 @@ function UF:TogglePortraits()
 	end
 end
 
-local function postUpdateRole(element, role)
-	if element:IsShown() then
-		if role == "DAMAGER" and C.db["UFs"]["ShowRoleMode"] == 3 then
-			element:Hide()
-			return
-		end
-		B.ReskinSmallRole(element, role)
-	end
-end
-
 function UF:CreateRestingIndicator(self)
 	local frame = CreateFrame("Frame", "NDuiRestingFrame", self)
 	frame:SetSize(5, 5)
@@ -616,7 +633,7 @@ function UF:CreateIcons(self)
 			ri:SetPoint("TOPRIGHT", self, 0, 8)
 		end
 		ri:SetSize(15, 15)
-		ri.PostUpdate = postUpdateRole
+		ri.damageAtlas = C.db["UFs"]["ShowRoleMode"] == 3 and ""
 		self.GroupRoleIndicator = ri
 	end
 
@@ -653,26 +670,6 @@ local function createBarMover(bar, text, value, anchor)
 	bar.mover = mover
 end
 
-local function updateSpellTarget(self, _, unit)
-	UF.PostCastUpdate(self.Castbar, unit)
-end
-
-function UF:ToggleCastBarLatency(frame)
-	frame = frame or _G.oUF_Player
-	if not frame then return end
-
-	if C.db["UFs"]["LagString"] then
-		frame:RegisterEvent("GLOBAL_MOUSE_UP", UF.OnCastSent, true) -- Fix quests with WorldFrame interaction
-		frame:RegisterEvent("GLOBAL_MOUSE_DOWN", UF.OnCastSent, true)
-		frame:RegisterEvent("CURRENT_SPELL_CAST_CHANGED", UF.OnCastSent, true)
-	else
-		frame:UnregisterEvent("GLOBAL_MOUSE_UP", UF.OnCastSent)
-		frame:UnregisterEvent("GLOBAL_MOUSE_DOWN", UF.OnCastSent)
-		frame:UnregisterEvent("CURRENT_SPELL_CAST_CHANGED", UF.OnCastSent)
-		if frame.Castbar then frame.Castbar.__sendTime = nil end
-	end
-end
-
 function UF:CreateCastBar(self)
 	local mystyle = self.mystyle
 	if mystyle ~= "nameplate" and not C.db["UFs"]["Castbars"] then return end
@@ -706,6 +703,7 @@ function UF:CreateCastBar(self)
 	end
 
 	local timer = B.CreateFS(cb, 12, "", false, "RIGHT", -2, 0)
+	timer.binding = UF.CreateCastbarTimeBinding()
 	local name = B.CreateFS(cb, 12, "", false, "LEFT", 2, 0)
 	name:SetPoint("RIGHT", timer, "LEFT", -5, 0)
 	name:SetJustifyH("LEFT")
@@ -726,14 +724,6 @@ function UF:CreateCastBar(self)
 		safeZone:SetPoint("BOTTOMRIGHT")
 		cb:SetFrameLevel(10)
 		cb.SafeZone = safeZone
-
-		local lagStr = B.CreateFS(cb, 10)
-		lagStr:ClearAllPoints()
-		lagStr:SetPoint("BOTTOM", cb, "TOP", 0, 2)
-		cb.LagString = lagStr
-
-		UF:ToggleCastBarLatency(self)
-
 	elseif mystyle == "nameplate" then
 		name:SetPoint("TOPLEFT", cb, "LEFT", 0, -1)
 		timer:SetPoint("TOPRIGHT", cb, "RIGHT", 0, -1)
@@ -747,10 +737,6 @@ function UF:CreateCastBar(self)
 		local iconSize = self:GetHeight()*2 + 5
 		cb.Icon:SetSize(iconSize, iconSize)
 		cb.Icon:SetPoint("BOTTOMRIGHT", cb, "BOTTOMLEFT", -5, 0)
-		cb.timeToHold = .5
-
-		cb.glowFrame = B.CreateGlowFrame(cb, iconSize)
-		cb.glowFrame:SetPoint("CENTER", cb.Icon)
 
 		local spellTarget = B.CreateFS(cb, C.db["Nameplate"]["NameTextSize"]+3)
 		spellTarget:ClearAllPoints()
@@ -758,28 +744,31 @@ function UF:CreateCastBar(self)
 		spellTarget:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 0, -2)
 		cb.spellTarget = spellTarget
 
-		self:RegisterEvent("UNIT_TARGET", updateSpellTarget)
-	end
+		local isYou = B.CreateFS(cb, C.db["Nameplate"]["NameTextSize"]+3)
+		isYou:ClearAllPoints()
+		isYou:SetJustifyH("LEFT")
+		isYou:SetPoint("TOPLEFT", name, "BOTTOMLEFT", 0, -2)
+		isYou:SetTextColor(1, 0, 0)
+		isYou:SetText(">>"..YOU.."<<")
+		isYou:SetAlpha(0)
+		cb.isYou = isYou
 
-	local stage = B.CreateFS(cb, 22)
-	stage:ClearAllPoints()
-	stage:SetPoint("TOPLEFT", cb.Icon, -2, 2)
-	cb.stageString = stage
-
-	if mystyle == "nameplate" or mystyle == "boss" or mystyle == "arena" then
-		cb.decimal = "%.1f"
-	else
-		cb.decimal = "%.2f"
+		local barGlow = cb:CreateTexture(nil, "ARTWORK", nil, 2)
+		barGlow:SetAllPoints()
+		barGlow:SetTexture(DB.barArrow)
+		barGlow:SetAlpha(0)
+		cb.barGlow = barGlow
 	end
 
 	cb.Time = timer
 	cb.Text = name
-	cb.OnUpdate = UF.OnCastbarUpdate
-	cb.PostCastStart = UF.PostCastStart
-	cb.PostCastUpdate = UF.PostCastUpdate
-	cb.PostCastStop = UF.PostCastStop
-	cb.PostCastFail = UF.PostCastFailed
-	cb.PostCastInterruptible = UF.PostUpdateInterruptible
+	cb.timeToHold = .5
+	cb.PostCastStart = UF.UpdateCastBarColor
+	cb.PostCastInterruptible = UF.UpdateCastBarColor
+	cb.PostCastStop = UF.Castbar_FailedColor
+	cb.PostCastFail = UF.Castbar_FailedColor
+	cb.PostCastInterrupted = UF.Castbar_UpdateInterrupted
+	cb.PostCastGlobal = UF.ResumeCastbarTime -- GCD right after an interrupted cast must show its countdown again
 	cb.CreatePip = UF.CreatePip
 	cb.PostUpdatePips = UF.PostUpdatePips
 
@@ -812,6 +801,19 @@ function UF:ToggleCastBar(unit)
 		self:EnableElement("Castbar")
 	elseif not C.db["UFs"][unit.."CB"] and self:IsElementEnabled("Castbar") then
 		self:DisableElement("Castbar")
+	end
+end
+
+function UF:ToggleSwingBars()
+	local frame = _G.oUF_Player
+	if not frame then return end
+
+	if C.db["UFs"]["SwingBar"] then
+		if not frame:IsElementEnabled("Swing") then
+			frame:EnableElement("Swing")
+		end
+	elseif frame:IsElementEnabled("Swing") then
+		frame:DisableElement("Swing")
 	end
 end
 
@@ -853,231 +855,554 @@ function UF:ReskinTimerTrakcer(self)
 end
 
 -- Auras Relevant
+local AURA_DURATION_BREAKPOINTS = {
+	{
+		threshold = 0,
+		step = 1,
+		rounding = Enum.NumericRuleFormatRounding.Down,
+		format = "%d",
+	},
+	{
+		threshold = SECONDS_PER_MIN,
+		format = "%d:%02d",
+		components = {
+			{div = SECONDS_PER_MIN, step = 1, rounding = Enum.NumericRuleFormatRounding.Down},
+			{mod = SECONDS_PER_MIN, step = 1, rounding = Enum.NumericRuleFormatRounding.Down},
+		},
+	},
+	{
+		threshold = 5 * SECONDS_PER_MIN,
+		format = "%dm",
+		components = {{div = SECONDS_PER_MIN, step = 1, rounding = Enum.NumericRuleFormatRounding.Down}},
+	},
+	{
+		threshold = SECONDS_PER_HOUR,
+		format = "%dh",
+		components = {{div = SECONDS_PER_HOUR, step = 1, rounding = Enum.NumericRuleFormatRounding.Down}},
+	},
+	{
+		threshold = SECONDS_PER_DAY,
+		format = "%dd",
+		components = {{div = SECONDS_PER_DAY, step = 1, rounding = Enum.NumericRuleFormatRounding.Down}},
+	},
+}
+local HIDDEN_AURA_DURATION_BREAKPOINTS = {{threshold = 0, format = ""}}
+
+local function UpdateAuraDurationFormatter(element, hidden)
+	local formatter = element.__nduiDurationFormatter
+	if not formatter then
+		formatter = C_StringUtil.CreateNumericRuleFormatter()
+		element.__nduiDurationFormatter = formatter
+	end
+
+	hidden = hidden and true or false
+	if element.__nduiDurationHidden ~= hidden then
+		formatter:SetBreakpoints(hidden and HIDDEN_AURA_DURATION_BREAKPOINTS or AURA_DURATION_BREAKPOINTS)
+		element.__nduiDurationHidden = hidden
+	end
+
+	return formatter
+end
+
 function UF:UpdateIconTexCoord(width, height)
 	local ratio = height / width
 	local mult = (1 - ratio) / 2
 	self.Icon:SetTexCoord(x1, x2, y1 + mult, y2 - mult)
 end
 
-function UF.PostCreateButton(element, button)
-	local fontSize = element.fontSize or element.size*.6
-	local parentFrame = CreateFrame("Frame", nil, button)
-	parentFrame:SetAllPoints()
-	parentFrame:SetFrameLevel(button:GetFrameLevel() + 3)
-	button.Count = B.CreateFS(parentFrame, fontSize, "", false, "BOTTOMRIGHT", 6, -3)
-	button.Cooldown:SetReverse(true)
-	local needShadow = true
-	if element.__owner.mystyle == "raid" and not C.db["UFs"]["RaidBuffIndicator"] then
-		needShadow = false
+local function CreateAuraDispelBorder(button, thickness)
+	thickness = thickness or C.mult
+	local border = CreateFrame("Frame", nil, button)
+	border:SetAllPoints()
+	border:SetFrameLevel(button.Cooldown:GetFrameLevel())
+	local textures = {}
+
+	local top = border:CreateTexture(nil, "OVERLAY", nil, 7)
+	top:SetColorTexture(1, 1, 1)
+	top:SetPoint("TOPLEFT", button)
+	top:SetPoint("TOPRIGHT", button)
+	top:SetHeight(thickness)
+	textures[1] = top
+
+	local bottom = border:CreateTexture(nil, "OVERLAY", nil, 7)
+	bottom:SetColorTexture(1, 1, 1)
+	bottom:SetPoint("BOTTOMLEFT", button)
+	bottom:SetPoint("BOTTOMRIGHT", button)
+	bottom:SetHeight(thickness)
+	textures[2] = bottom
+
+	local left = border:CreateTexture(nil, "OVERLAY", nil, 7)
+	left:SetColorTexture(1, 1, 1)
+	left:SetPoint("TOPLEFT", button)
+	left:SetPoint("BOTTOMLEFT", button)
+	left:SetWidth(thickness)
+	textures[3] = left
+
+	local right = border:CreateTexture(nil, "OVERLAY", nil, 7)
+	right:SetColorTexture(1, 1, 1)
+	right:SetPoint("TOPRIGHT", button)
+	right:SetPoint("BOTTOMRIGHT", button)
+	right:SetWidth(thickness)
+	textures[4] = right
+
+	local options = {
+		showWhenHarmful = true,
+		showWhenHelpful = true,
+		showWithoutDispelType = true,
+		style = Enum.CustomAuraButtonDispelTypeTextureStyle.PreserveAsset,
+		customDispelColorMap = UNITFRAME_AURA_DISPEL_COLORS,
+	}
+	for _, texture in ipairs(textures) do
+		button:AddDispelTypeTexture(texture, options)
 	end
-	button.iconbg = B.ReskinIcon(button.Icon, needShadow)
+end
+
+function UF.PostCreateButton(element, button, options)
+	local size = options.size or element.size
+	local fontSize = options.fontSize or element.fontSize or size*.4
+	if button.Count then
+		button.Count:SetFont(DB.Font[1], fontSize, DB.Font[3])
+		button.Count:SetPoint("BOTTOMRIGHT", 2, 0)
+	end
+	if button.Cooldown then
+		button.Cooldown:SetReverse(true)
+		button.CooldownText = button.Cooldown:GetRegions()
+		if button.CooldownText then
+			button.CooldownText:SetFont(DB.Font[1], fontSize, DB.Font[3])
+		end
+		Cooldown:IgnoreCooldown(button.Cooldown)
+		button.Cooldown:SetCountdownFormatter(UpdateAuraDurationFormatter(element, element.hideDuration))
+	end
+	if options.desaturated then
+		button.Icon:SetDesaturated(true)
+	end
+	button.iconbg = B.ReskinIcon(button.Icon)
+	button.iconbg:SetBackdropBorderColor(0, 0, 0)
+	B.CreateSD(button)
+
+	if options.showDebuffTypeBorder then
+		CreateAuraDispelBorder(button, C.mult * (element.__debuffBorderSize or 1))
+	end
 
 	button.HL = button:CreateTexture(nil, "HIGHLIGHT")
 	button.HL:SetColorTexture(1, 1, 1, .25)
 	button.HL:SetAllPoints()
 
-	button.Overlay:SetTexture(nil)
-	button.Stealable:SetAtlas("bags-newitem")
-	if AURA then
-		button:HookScript("OnMouseDown", AURA.RemoveSpellFromIgnoreList)
+	if button.Overlay then
+		button.Overlay:Hide()
+		button.Overlay = nil
+	end
+	if button.Stealable then
+		button.Stealable:SetAtlas("bags-newitem")
 	end
 
-	if element.disableCooldown then
-		hooksecurefunc(button, "SetSize", UF.UpdateIconTexCoord)
-		button.timer = B.CreateFS(button, fontSize, "")
-		button.timer:ClearAllPoints()
-		button.timer:SetPoint("LEFT", button, "TOPLEFT", -2, 0)
-		button.Count:ClearAllPoints()
-		button.Count:SetPoint("RIGHT", button, "BOTTOMRIGHT", 5, 0)
+	if element.__owner.mystyle == "nameplate" then
+		local sizeRatio = options.sizeRatio or element.sizeRatio
+		UF.UpdateIconTexCoord(button, size, size * sizeRatio)
+		if button.Count then
+			button.Count:ClearAllPoints()
+			button.Count:SetPoint("RIGHT", button, "BOTTOMRIGHT", 5, 0)
+		end
 	end
 end
 
-local filteredStyle = {
-	["target"] = true,
-	["nameplate"] = true,
-	["boss"] = true,
-	["arena"] = true,
+-- 友方减益的法术ID过滤仅对NeverSecret光环生效 / Friendly harmful spell-ID filters only apply to NeverSecret auras.
+local RAID_DEBUFF_BLACKLIST = {
+	[57723] = true,	-- 筋疲力尽 / Exhaustion
+	[57724] = true,	-- 心满意足 / Sated
+	[80354] = true,	-- 时空错位 / Temporal Displacement
+	[95809] = true,	-- 疯狂 / Insanity
+	[160455] = true,	-- 疲倦 / Fatigued
+	[264689] = true,	-- 疲倦 / Fatigued
+	[390435] = true,	-- 筋疲力尽 / Exhaustion
+	[26013] = true,	-- 逃亡者 / Deserter
+	[71041] = true,	-- 地下城逃亡者 / Dungeon Deserter
+	[1313593] = true,	-- 逃亡者 / Deserter
+	[206151] = true,	-- 挑战者的负担 / Challenger's Burden
+	[308312] = true,	-- 限时试炼练习 / Time Trial Practice
+	[1254550] = true,	-- 奥术强化 / Arcane Empowerment
 }
 
-UF.ReplacedSpellIcons = {
-	[368078] = 348567, -- 移速
-	[368079] = 348567, -- 移速
-	[368103] = 648208, -- 急速
-	[368243] = 237538, -- CD
-	[373785] = 236293, -- S4，大魔王伪装
+local function UpdateAuraGroup(element, name, filter, count)
+	local groupKey = filter and element.__groups[name]
+	if not groupKey then return end
+
+	element:SetAuraGroupFilterString(groupKey, filter)
+	element:SetAuraGroupMaxFrameCount(groupKey, count or 0)
+end
+
+local NAMEPLATE_AURA_GROUP_NAME = "NameplateAuras"
+local NAMEPLATE_AURA_SETTINGS = {
+	buffs = {
+		enabled = "PlateBuffs",
+		count = "maxBuffs",
+		size = "BuffSize",
+		fontSize = "BuffFontSize",
+		sizeRatio = "BuffSizeRatio",
+		typeBorder = "BuffColor",
+	},
+	debuffs = {
+		enabled = "PlateAuras",
+		count = "maxAuras",
+		size = "AuraSize",
+		fontSize = "FontSize",
+		sizeRatio = "SizeRatio",
+		typeBorder = "DebuffColor",
+	},
 }
 
-local dispellType = {
-	["Magic"] = true,
-	[""] = true,
+-- Aura filter rules
+local PRIORITY_BUFF_RULES = {
+	bossOrRole = { -- Boss and role buffs
+		auraType = "buffs",
+		filter = "HELPFUL",
+		candidateFilters = {
+			isBossOrRoleAura = true,
+		},
+	},
+	stealable = { -- Other stealable buffs
+		auraType = "buffs",
+		filter = "HELPFUL|!IMPORTANT",
+		candidateFilters = {
+			isStealable = true,
+			isBossOrRoleAura = false,
+		},
+	},
+	dispellable = { -- Other dispellable buffs
+		auraType = "buffs",
+		filter = "HELPFUL|DISPELLABLE|!IMPORTANT",
+		candidateFilters = {
+			isBossOrRoleAura = false,
+		},
+	},
+	important = { -- Other important buffs
+		auraType = "buffs",
+		filter = "HELPFUL|IMPORTANT",
+		candidateFilters = {
+			isBossOrRoleAura = false,
+		},
+	},
 }
 
-function UF.PostUpdateButton(element, button, unit, data)
-	local duration, expiration, debuffType = data.duration, data.expirationTime, data.dispelName
+local NAMEPLATE_DEBUFF_GROUPS = {
+	{ -- Personal nameplate debuffs, excluding crowd control
+		auraType = "debuffs",
+		filter = "HARMFUL|PLAYER|INCLUDE_NAME_PLATE_ONLY|!CROWD_CONTROL",
+		candidateFilters = {
+			nameplateShowPersonal = true,
+		},
+	},
+	{ -- Other nameplate debuffs visible to everyone, excluding crowd control
+		auraType = "debuffs",
+		filter = "HARMFUL|INCLUDE_NAME_PLATE_ONLY|!CROWD_CONTROL",
+		candidateFilters = {
+			nameplateShowAll = true,
+			nameplateShowPersonal = false,
+		},
+	},
+}
 
-	if duration then button.iconbg:Show() end
+local NAMEPLATE_BUFF_GROUPS = {
+	PRIORITY_BUFF_RULES.bossOrRole,
+	PRIORITY_BUFF_RULES.stealable,
+	PRIORITY_BUFF_RULES.important,
+}
+local NAMEPLATE_AURA_GROUPS = {
+	NAMEPLATE_BUFF_GROUPS[1],
+	NAMEPLATE_BUFF_GROUPS[2],
+	NAMEPLATE_BUFF_GROUPS[3],
+	NAMEPLATE_DEBUFF_GROUPS[1],
+	NAMEPLATE_DEBUFF_GROUPS[2],
+}
+local NAMEPLATE_NPC_BUFF_GROUP = PRIORITY_BUFF_RULES.dispellable
+local NAMEPLATE_CC_RULE = {
+	filter = "HARMFUL|CROWD_CONTROL|INCLUDE_NAME_PLATE_ONLY",
+}
+local NAMEPLATE_AURA_CONTAINERS = {
+	{auraType = "debuffs", element = "Auras", anchor = "BOTTOMLEFT", relativeAnchor = "TOPLEFT", growthX = "RIGHT"},
+	{auraType = "buffs", element = "Buffs", anchor = "BOTTOMRIGHT", relativeAnchor = "TOPRIGHT", growthX = "LEFT"},
+}
 
-	local style = element.__owner.mystyle
-	if style == "nameplate" then
-		button:SetSize(element.size, element.size * C.db["Nameplate"]["SizeRatio"])
+local BOSS_BUFF_GROUP_NAME = "BossBuffs"
+local BOSS_BUFF_GROUPS = {
+	PRIORITY_BUFF_RULES.bossOrRole,
+	PRIORITY_BUFF_RULES.stealable,
+	PRIORITY_BUFF_RULES.important,
+}
+
+local DEFENSIVE_BUFF_RULES = {
+	big = {
+		filter = "HELPFUL|BIG_DEFENSIVE|!EXTERNAL_DEFENSIVE",
+	},
+	external = {
+		filter = "HELPFUL|EXTERNAL_DEFENSIVE",
+	},
+	dispellable = {
+		filter = "HELPFUL|DISPELLABLE|!BIG_DEFENSIVE|!EXTERNAL_DEFENSIVE",
+	},
+}
+
+local ARENA_BUFF_GROUP_NAME = "ArenaBuffs"
+local ARENA_BUFF_GROUPS = {
+	[3] = {
+		DEFENSIVE_BUFF_RULES.big,
+		DEFENSIVE_BUFF_RULES.external,
+	},
+	[5] = {
+		DEFENSIVE_BUFF_RULES.big,
+		DEFENSIVE_BUFF_RULES.external,
+		DEFENSIVE_BUFF_RULES.dispellable,
+	},
+}
+
+local ARENA_DEBUFF_GROUP_NAME = "ArenaDebuffs"
+local ARENA_DEBUFF_GROUPS = {
+	{
+		filter = "HARMFUL|PLAYER|INCLUDE_NAME_PLATE_ONLY",
+		candidateFilters = {
+			nameplateShowPersonal = true,
+		},
+	},
+	{
+		filter = "HARMFUL|INCLUDE_NAME_PLATE_ONLY",
+		candidateFilters = {
+			nameplateShowAll = true,
+			nameplateShowPersonal = false,
+		},
+	},
+}
+
+local RAID_BUFF_GROUP = {
+	-- isFromPlayerOrPlayerPet candidate boolean matches auras cast by ANY player
+	-- PLAYER filter token instead
+	filter = "HELPFUL|PLAYER|RAID_IN_COMBAT|!BIG_DEFENSIVE|!EXTERNAL_DEFENSIVE",
+	candidateFilters = {
+		isFromPlayerOrPlayerPet = true,
+	},
+}
+
+local RAID_BIG_DEFENSIVE_SPACING = 2
+local RAID_BIG_DEFENSIVE_RIGHT_INSET = 17
+local RAID_BIG_DEFENSIVE_PADDING = 3
+local RAID_BIG_DEFENSIVE_GROUPS = {
+	DEFENSIVE_BUFF_RULES.big,
+	DEFENSIVE_BUFF_RULES.external,
+}
+
+local function PostCreateRaidBigDefensiveButton(element, button, options)
+	UF.PostCreateButton(element, button, options)
+	local xOffset = (options.slotIndex - 1.5) * (options.size + RAID_BIG_DEFENSIVE_SPACING)
+	button:ClearAllPoints()
+	button:SetPoint("CENTER", element.__owner.Health, xOffset, 0)
+	-- Now that it sits over the name, keep it above the name/HP text, which
+	-- lives on a sub-level of the frame while aura buttons default to a low one.
+	button:SetFrameLevel(element.__owner:GetFrameLevel() + 10)
+end
+
+local RAID_DEBUFF_GROUP_NAME = "RaidDebuffs"
+local RAID_DEBUFF_GROUPS = {
+	{ -- Boss and role auras
+		filter = "HARMFUL",
+		candidateFilters = {
+			isBossOrRoleAura = true,
+			isFromPlayerOrPlayerPet = false,
+		},
+	},
+	{ -- Other priority auras
+		filter = "HARMFUL",
+		candidateFilters = {
+			isBossOrRoleAura = false,
+			isPriorityAura = true,
+			isFromPlayerOrPlayerPet = false,
+		},
+	},
+	{ -- Dispellable auras
+		filter = "HARMFUL|DISPELLABLE",
+		candidateFilters = {
+			isBossOrRoleAura = false,
+			isPriorityAura = false,
+		},
+	},
+	{ -- Other regular auras
+		filter = "HARMFUL|!DISPELLABLE",
+		candidateFilters = {
+			isBossOrRoleAura = false,
+			isPriorityAura = false,
+			isFromPlayerOrPlayerPet = false,
+			excludeSpellIDs = RAID_DEBUFF_BLACKLIST,
+		},
+	},
+}
+
+local UNITFRAME_DESATURATED_DEBUFF_TYPE = 2
+local UNITFRAME_DESATURATED_DEBUFF_GROUP_NAME = "UnitFrameDesaturatedDebuffs"
+local UNITFRAME_DESATURATED_DEBUFF_GROUPS = {
+	{filter = "HARMFUL|PLAYER"},
+	{filter = "HARMFUL|!PLAYER"},
+}
+local UNITFRAME_PERSONAL_DEBUFF_LIMIT = 8
+local UNITFRAME_DESATURATED_DEBUFF_VALUES = {
+	--Player = true,
+	Target = true,
+	Focus = true,
+}
+
+-- Filter strings mapped to each GUI dropdown value
+local UNITFRAME_AURA_FILTERS = {
+	Buff = {
+		[1] = "HELPFUL",
+		[2] = "HELPFUL",
+		[3] = "HELPFUL|DISPELLABLE",
+		[4] = "HELPFUL|CANCELABLE",
+	},
+	Debuff = {
+		[1] = "HARMFUL",
+		[2] = "HARMFUL",
+		[3] = "HARMFUL|PLAYER",
+		[4] = "HARMFUL|DISPELLABLE",
+	},
+}
+
+local AURA_FILTER_OPTIONS = {
+	Raid = {
+		Buff = {
+			[1] = "HELPFUL",
+			[2] = RAID_BUFF_GROUP.filter,
+		},
+		Debuff = {
+			[1] = "HARMFUL",
+			[2] = "HARMFUL|RAID_IN_COMBAT",
+			[3] = "HARMFUL|DISPELLABLE",
+			[4] = "HARMFUL",
+		},
+	},
+	Boss = {
+		Buff = {
+			[1] = "HELPFUL",
+			[2] = "HELPFUL",
+			[3] = BOSS_BUFF_GROUPS[1].filter,
+		},
+		Debuff = UNITFRAME_AURA_FILTERS.Debuff,
+	},
+	Arena = {
+		Buff = {
+			[1] = "HELPFUL",
+			[2] = "HELPFUL",
+			[3] = ARENA_BUFF_GROUPS[3][1].filter,
+			[4] = "HELPFUL|DISPELLABLE",
+			[5] = ARENA_BUFF_GROUPS[5][1].filter,
+		},
+		Debuff = {
+			[1] = "HARMFUL",
+			[2] = "HARMFUL",
+			[3] = ARENA_DEBUFF_GROUPS[1].filter,
+		},
+	},
+}
+
+local function GetUnitFrameDesaturatedDebuffCount(total, index)
+	if index == 1 then
+		return min(total, UNITFRAME_PERSONAL_DEBUFF_LIMIT)
+	end
+
+	return max(total - UNITFRAME_PERSONAL_DEBUFF_LIMIT, 0)
+end
+
+local function GetNameplateAuraGroupCount(group)
+	local settings = NAMEPLATE_AURA_SETTINGS[group.auraType]
+	local db = C.db["Nameplate"]
+	return db[settings.enabled] and db[settings.count] or 0
+end
+
+local function UpdateNameplateAuraGroups(parent, element)
+	local useNPCBuffFilter = element.__nameplateAuraType == "buffs" and parent.isPlayer == false and parent.isFriendly == false
+	local buffFilterChanged = element.__useNPCBuffFilter ~= nil and element.__useNPCBuffFilter ~= useNPCBuffFilter
+	element.__useNPCBuffFilter = useNPCBuffFilter
+
+	for index, group in ipairs(NAMEPLATE_AURA_GROUPS) do
+		if group.auraType == element.__nameplateAuraType then
+			local name = NAMEPLATE_AURA_GROUP_NAME..index
+			local activeGroup = useNPCBuffFilter and index == 2 and NAMEPLATE_NPC_BUFF_GROUP or group
+
+			UpdateAuraGroup(element, name, activeGroup.filter, GetNameplateAuraGroupCount(group))
+			if buffFilterChanged and index == 2 then
+				element:SetAuraGroupCandidateFilters(element.__groups[name], activeGroup.candidateFilters)
+			end
+		end
+	end
+end
+
+local function UpdateAuraGroups(element, groupName, groups, count)
+	for index, group in ipairs(groups) do
+		UpdateAuraGroup(element, groupName..index, group.filter, count)
+	end
+end
+
+function UF:UpdateAuraContainer(parent, element)
+	UpdateAuraGroup(element, "Buffs", element.buffFilter, element.numBuffs)
+	if element.__groups[UNITFRAME_DESATURATED_DEBUFF_GROUP_NAME..1] then
+		for index, group in ipairs(UNITFRAME_DESATURATED_DEBUFF_GROUPS) do
+			local count = element.__desaturateOthers and GetUnitFrameDesaturatedDebuffCount(element.numDebuffs, index) or 0
+			UpdateAuraGroup(element, UNITFRAME_DESATURATED_DEBUFF_GROUP_NAME..index, group.filter, count)
+		end
 	else
-		button:SetSize(element.size, element.size)
+		local count = element.__desaturateOthers and 0 or element.numDebuffs
+		UpdateAuraGroup(element, "Debuffs", element.debuffFilter, count)
 	end
 
-	if element.desaturateDebuff and button.isHarmful and filteredStyle[style] and not data.isPlayerAura then
-		button.Icon:SetDesaturated(true)
-	else
-		button.Icon:SetDesaturated(false)
-	end
-
-	if element.showDebuffType and button.isHarmful then
-		local color = oUF.colors.debuff[debuffType] or oUF.colors.debuff.none
-		button.iconbg:SetBackdropBorderColor(color[1], color[2], color[3])
-	else
-		button.iconbg:SetBackdropBorderColor(0, 0, 0)
-	end
-
-	if element.alwaysShowStealable and dispellType[debuffType] and not UnitIsPlayer(unit) and (not button.isHarmful) then
-		button.Stealable:Show()
-	end
-
-	if element.disableCooldown then
-		if duration and duration > 0 then
-			button.expiration = expiration
-			button:SetScript("OnUpdate", B.CooldownOnUpdate)
-			button.timer:Show()
+	local auraType = element.__auraType
+	if auraType then
+		if auraType == "nameplate" then
+			UpdateNameplateAuraGroups(parent, element)
 		else
-			button:SetScript("OnUpdate", nil)
-			button.timer:Hide()
-		end
-	end
-
-	local newTexture = UF.ReplacedSpellIcons[button.spellID]
-	if newTexture then
-		button.Icon:SetTexture(newTexture)
-	end
-
-	if element.bolsterInstanceID and element.bolsterInstanceID == button.auraInstanceID then
-		button.Count:SetText(element.bolsterStacks)
-	end
-end
-
-function UF.AurasPostUpdateInfo(element, _, _, debuffsChanged)
-	element.bolsterStacks = 0
-	element.bolsterInstanceID = nil
-
-	for auraInstanceID, data in next, element.allBuffs do
-		if data.spellId == 209859 then
-			if not element.bolsterInstanceID then
-				element.bolsterInstanceID = auraInstanceID
-				element.activeBuffs[auraInstanceID] = true
-			end
-			element.bolsterStacks = element.bolsterStacks + 1
-			if element.bolsterStacks > 1 then
-				element.activeBuffs[auraInstanceID] = nil
-			end
-		end
-	end
-	if element.bolsterStacks > 0 then
-		for i = 1, element.visibleButtons do
-			local button = element[i]
-			if element.bolsterInstanceID and element.bolsterInstanceID == button.auraInstanceID then
-				button.Count:SetText(element.bolsterStacks)
-				break
+			local isRaidDebuffs = auraType == "debuffs" and element.__value == "Raid"
+			local isBossBuffs = auraType == "buffs" and element.__value == "Boss"
+			local isArenaBuffs = auraType == "buffs" and element.__value == "Arena"
+			local isArenaDebuffs = auraType == "debuffs" and element.__value == "Arena"
+			if isRaidDebuffs and element.__groups[RAID_DEBUFF_GROUP_NAME..1] then
+				local count = element.__filterType == 2 and element.num or 0
+				UpdateAuraGroups(element, RAID_DEBUFF_GROUP_NAME, RAID_DEBUFF_GROUPS, count)
+			elseif isBossBuffs and element.__groups[BOSS_BUFF_GROUP_NAME..1] then
+				local count = element.__filterType == 3 and element.num or 0
+				UpdateAuraGroups(element, BOSS_BUFF_GROUP_NAME, BOSS_BUFF_GROUPS, count)
+			elseif isArenaBuffs and element.__groups[ARENA_BUFF_GROUP_NAME..1] then
+				local groupType = element.__groups[ARENA_BUFF_GROUP_NAME..3] and 5 or 3
+				local count = element.__filterType == groupType and element.num or 0
+				UpdateAuraGroups(element, ARENA_BUFF_GROUP_NAME, ARENA_BUFF_GROUPS[groupType], count)
+			elseif isArenaDebuffs and element.__groups[ARENA_DEBUFF_GROUP_NAME..1] then
+				local count = element.__filterType == 3 and element.num or 0
+				UpdateAuraGroups(element, ARENA_DEBUFF_GROUP_NAME, ARENA_DEBUFF_GROUPS, count)
+			else
+				local groupName = auraType == "buffs" and "Buffs" or "Debuffs"
+				local needsReload = isRaidDebuffs and element.__filterType == 2
+					or isBossBuffs and element.__filterType == 3
+					or isArenaBuffs and ARENA_BUFF_GROUPS[element.__filterType]
+					or isArenaDebuffs and element.__filterType == 3
+				local count = needsReload and 0 or element.num or element.numTotal
+				UpdateAuraGroup(element, groupName, element.filter, count)
 			end
 		end
 	end
 
-	if debuffsChanged then
-		element.hasTheDot = nil
-		if C.db["Nameplate"]["ColorByDot"] then
-			for _, data in next, element.allDebuffs do
-				if data.isPlayerAura and C.db["Nameplate"]["DotSpells"][data.spellId] then
-					element.hasTheDot = true
-					break
-				end
-			end
-		end
-	end
-end
+	if parent.mystyle == "nameplate" then return end
 
-function UF.PostUpdateGapButton(_, _, button)
-	if button.iconbg and button.iconbg:IsShown() then
-		button.iconbg:Hide()
-	end
-end
-
-function UF.CustomFilter(element, unit, data)
-	local style = element.__owner.mystyle
-	local name, debuffType, isStealable, spellID, nameplateShowAll = data.name, data.dispelName, data.isStealable, data.spellId, data.nameplateShowAll
-
-	if style == "nameplate" or style == "boss" or style == "arena" then
-		if name and spellID == 209859 then -- pass all bolster
-			return true
-		end
-		if element.__owner.plateType == "NameOnly" then
-			return UF.NameplateWhite[spellID]
-		elseif UF.NameplateBlack[spellID] then
-			return false
-		elseif (element.showStealableBuffs and isStealable or element.alwaysShowStealable and dispellType[debuffType]) and not UnitIsPlayer(unit) and (not data.isHarmful) then
-			return true
-		elseif UF.NameplateWhite[spellID] then
-			return true
-		else
-			local auraFilter = C.db["Nameplate"]["AuraFilter"]
-			return (auraFilter == 3 and nameplateShowAll) or (auraFilter ~= 1 and data.isPlayerAura)
-		end
-	else
-		return (element.onlyShowPlayer and data.isPlayerAura) or (not element.onlyShowPlayer and name)
-	end
-end
-
-function UF.UnitCustomFilter(element, _, data)
-	local value = element.__value
-	if data.isHarmful then
-		if C.db["UFs"][value.."DebuffType"] == 2 then
-			return data.name
-		elseif C.db["UFs"][value.."DebuffType"] == 3 then
-			return data.isPlayerAura
-		end
-	else
-		if C.db["UFs"][value.."BuffType"] == 2 then
-			return data.name
-		elseif C.db["UFs"][value.."BuffType"] == 3 then
-			return data.isStealable
-		end
-	end
-end
-
-local function auraIconSize(w, n, s)
-	return (w-(n-1)*s)/n
-end
-
-function UF:UpdateAuraContainer(parent, element, maxAuras)
-	local width = parent:GetWidth()
-	local iconsPerRow = element.iconsPerRow
-	local maxLines = iconsPerRow and B:Round(maxAuras/iconsPerRow) or 2
-	element.size = iconsPerRow and auraIconSize(width, iconsPerRow, element.spacing) or element.size
-	element:SetWidth(width)
-	element:SetHeight((element.size + element.spacing) * maxLines)
-
-	local fontSize = element.fontSize or element.size*.6
-	for i = 1, #element do
-		local button = element[i]
-		if button then
-			if button.timer then B.SetFontSize(button.timer, fontSize) end
-			if button.Count then B.SetFontSize(button.Count, fontSize) end
-		end
-	end
+	-- AuraButton regions are forbidden after the provider initializer returns.
+	UpdateAuraDurationFormatter(element, element.hideDuration)
 end
 
 function UF:ConfigureAuras(element)
 	local value = element.__value
-	element.numBuffs = C.db["UFs"][value.."BuffType"] ~= 1 and C.db["UFs"][value.."NumBuff"] or 0
-	element.numDebuffs = C.db["UFs"][value.."DebuffType"] ~= 1 and C.db["UFs"][value.."NumDebuff"] or 0
-	element.iconsPerRow = C.db["UFs"][value.."AurasPerRow"]
-	element.showDebuffType = C.db["UFs"]["DebuffColor"]
-	element.desaturateDebuff = C.db["UFs"]["Desaturate"]
+	local buffType = C.db["UFs"][value.."BuffType"]
+	local debuffType = C.db["UFs"][value.."DebuffType"]
+	element.numBuffs = buffType ~= 1 and C.db["UFs"][value.."NumBuff"] or 0
+	element.numDebuffs = debuffType ~= 1 and C.db["UFs"][value.."NumDebuff"] or 0
+	element.buffFilter = UNITFRAME_AURA_FILTERS.Buff[buffType]
+	element.debuffFilter = UNITFRAME_AURA_FILTERS.Debuff[debuffType]
+	element.__desaturateOthers = UNITFRAME_DESATURATED_DEBUFF_VALUES[value] and debuffType == UNITFRAME_DESATURATED_DEBUFF_TYPE
+	element.size = C.db["UFs"][value.."AuraSize"]
+	-- Keep oUF's native Border uncreated; Blizzard can show it again after a layout-side Hide.
+	element.showDebuffTypeBorder = C.db["UFs"]["DebuffColor"]
+	element.fontSize = C.db["UFs"][value.."CDSize"]
 end
 
 function UF:RefreshUFAuras(frame)
@@ -1086,7 +1411,7 @@ function UF:RefreshUFAuras(frame)
 	if not element then return end
 
 	UF:ConfigureAuras(element)
-	UF:UpdateAuraContainer(frame, element, element.numBuffs + element.numDebuffs)
+	UF:UpdateAuraContainer(frame, element)
 	UF:UpdateAuraDirection(frame, element)
 	element:ForceUpdate()
 end
@@ -1094,10 +1419,23 @@ end
 function UF:ConfigureBuffAndDebuff(element, isDebuff)
 	local value = element.__value
 	local vType = isDebuff and "Debuff" or "Buff"
-	element.num = C.db["UFs"][value..vType.."Type"] ~= 1 and C.db["UFs"][value.."Num"..vType] or 0
-	element.iconsPerRow = C.db["UFs"][value..vType.."PerRow"]
-	element.showDebuffType = C.db["UFs"]["DebuffColor"]
-	element.desaturateDebuff = C.db["UFs"]["Desaturate"]
+	local isRaid = value == "Raid"
+	local filterType = C.db["UFs"][value..vType.."Type"]
+	element.__filterType = filterType
+	element.num = filterType ~= 1 and C.db["UFs"][value.."Num"..vType] or 0
+	local filterOptions = AURA_FILTER_OPTIONS[value] or UNITFRAME_AURA_FILTERS
+	element.filter = filterOptions[vType][filterType]
+	element.size = C.db["UFs"][value..vType.."Size"]
+	element.showDebuffTypeBorder = isDebuff and (isRaid or C.db["UFs"]["DebuffColor"])
+	element.__debuffBorderSize = (isDebuff and isRaid) and C.db["UFs"]["RaidDebuffBorderSize"] or 1
+	if isRaid then
+		local setting = isDebuff and "RaidDebuff" or "RaidBuff"
+		element.fontSize = C.db["UFs"][setting.."CDSize"]
+		element.hideDuration = not C.db["UFs"][setting.."CDText"]
+	else
+		element.fontSize = C.db["UFs"][value.."CDSize"]
+		element.hideDuration = false
+	end
 end
 
 function UF:RefreshBuffAndDebuff(frame)
@@ -1106,14 +1444,14 @@ function UF:RefreshBuffAndDebuff(frame)
 	local element = frame.Buffs
 	if element then
 		UF:ConfigureBuffAndDebuff(element)
-		UF:UpdateAuraContainer(frame, element, element.num)
+		UF:UpdateAuraContainer(frame, element)
 		element:ForceUpdate()
 	end
 
 	local element = frame.Debuffs
 	if element then
 		UF:ConfigureBuffAndDebuff(element, true)
-		UF:UpdateAuraContainer(frame, element, element.num)
+		UF:UpdateAuraContainer(frame, element)
 		element:ForceUpdate()
 	end
 end
@@ -1125,9 +1463,18 @@ function UF:UpdateUFAuras()
 	UF:RefreshUFAuras(_G.oUF_ToT)
 	UF:RefreshUFAuras(_G.oUF_Pet)
 
-	for i = 1, 5 do
+	for i = 1, 10 do
 		UF:RefreshBuffAndDebuff(_G["oUF_Boss"..i])
+	end
+
+	for i = 1, 5 do
 		UF:RefreshBuffAndDebuff(_G["oUF_Arena"..i])
+	end
+
+	for _, frame in pairs(oUF.objects) do
+		if frame.mystyle == "raid" then
+			UF:RefreshBuffAndDebuff(frame)
+		end
 	end
 end
 
@@ -1136,11 +1483,11 @@ function UF:ToggleUFAuras(frame, enable)
 	if enable then
 		if not frame:IsElementEnabled("Auras") then
 			frame:EnableElement("Auras")
+			frame.Auras:ForceUpdate()
 		end
 	else
 		if frame:IsElementEnabled("Auras") then
 			frame:DisableElement("Auras")
-			frame.Auras:ForceUpdate()
 		end
 	end
 end
@@ -1151,6 +1498,7 @@ function UF:ToggleAllAuras()
 	UF:ToggleUFAuras(_G.oUF_Target, enable)
 	UF:ToggleUFAuras(_G.oUF_Focus, enable)
 	UF:ToggleUFAuras(_G.oUF_ToT, enable)
+	UF:ToggleUFAuras(_G.oUF_Pet, enable)
 end
 
 UF.AuraDirections = {
@@ -1165,10 +1513,101 @@ function UF:UpdateAuraDirection(self, element)
 	local yOffset = C.db["UFs"][element.__value.."AuraOffset"]
 	local value = UF.AuraDirections[direc]
 	element.initialAnchor = value.initialAnchor
-	element["growth-x"] = value.growthX
-	element["growth-y"] = value.growthY
+	element["growthX"] = value.growthX
+	element["growthY"] = value.growthY
+	element:SetFlowLayoutAnchorPoint(value.initialAnchor)
+	element:SetFlowLayoutGrowthDirection(
+		value.growthX == "LEFT" and -1 or 1,
+		value.growthY == "DOWN" and -1 or 1
+	)
 	element:ClearAllPoints()
 	element:SetPoint(value.initialAnchor, self, value.relAnchor, value.x, value.y * yOffset)
+end
+
+local function AuraGroupLayout(element, index, groupSpacing)
+	if groupSpacing == nil then groupSpacing = element.groupSpacing end
+	if groupSpacing == nil then groupSpacing = element.spacing end
+	return {
+		elementSpacing = element.spacing,
+		lineSpacing = element.spacing,
+		groupSpacing = groupSpacing,
+		groupLineSpacing = groupSpacing,
+		forceNewLine = false,
+		layoutIndex = index,
+	}
+end
+
+local function AddAuraGroup(element, name, filter, count, index, candidateFilters, sortMethod, buttonOptions)
+	buttonOptions = buttonOptions or {}
+	local size = buttonOptions.size or element.size
+	local sizeRatio = buttonOptions.sizeRatio or element.sizeRatio
+	local showTypeBorder = buttonOptions.showDebuffTypeBorder
+	if showTypeBorder == nil then
+		local useTypeBorder = name == "Debuffs" or element.__auraType == "debuffs"
+		showTypeBorder = useTypeBorder and element.showDebuffTypeBorder
+	end
+
+	element.__groups[name] = element:AddGroup(filter, {
+		candidateFilters = candidateFilters,
+		maxFrameCount = count,
+		sortMethod = sortMethod,
+		size = size,
+		height = element.__owner.mystyle == "nameplate" and size * sizeRatio or nil,
+		fontSize = buttonOptions.fontSize,
+		sizeRatio = sizeRatio,
+		desaturated = buttonOptions.desaturated,
+		showDebuffTypeBorder = showTypeBorder,
+		layout = AuraGroupLayout(element, index, buttonOptions.groupSpacing),
+	})
+end
+
+local function CreateAuraElement(self, options)
+	local element = self:CreateAuras({
+		initialAnchor = options.initialAnchor,
+		growthX = options.growthX,
+		growthY = options.growthY,
+		layout = AnchorUtil.FlowLayoutAxis.Horizontal,
+		layoutLimit = self:GetWidth(),
+	})
+
+	element.__groups = {}
+	element.__value = options.value
+	element.spacing = options.spacing or 0
+	element.groupSpacing = options.groupSpacing
+	element.fontSize = options.fontSize
+	element.hideDuration = options.hideDuration
+	element.sizeRatio = options.sizeRatio or 1
+	element.disableMouse = options.disableMouse
+	element.showDebuffBorder = options.showDebuffBorder
+	element.showCount = true
+	element.showDuration = false
+	element.showStealableBorder = true
+	element.PostCreateButton = UF.PostCreateButton
+	return element
+end
+
+function UF:UpdateAuraLayoutLimit(frame)
+	local width = frame:GetWidth()
+	local element = frame.Auras
+	if element then
+		element:SetFlowLayoutMaximumLineSize(width)
+	end
+
+	element = frame.Buffs
+	if element then
+		local buffWidth = width
+		if frame.BigDefensives then
+			local defensiveSize = frame.BigDefensives.iconSize
+			local reservedWidth = RAID_BIG_DEFENSIVE_RIGHT_INSET + defensiveSize * 2 + RAID_BIG_DEFENSIVE_SPACING + RAID_BIG_DEFENSIVE_PADDING
+			buffWidth = max(width - reservedWidth, element.size)
+		end
+		element:SetFlowLayoutMaximumLineSize(buffWidth)
+	end
+
+	element = frame.Debuffs
+	if element then
+		element:SetFlowLayoutMaximumLineSize(width)
+	end
 end
 
 local auraUFs = {
@@ -1178,128 +1617,243 @@ local auraUFs = {
 	["pet"] = "Pet",
 	["focus"] = "Focus",
 }
+
 function UF:CreateAuras(self)
 	local mystyle = self.mystyle
-	local bu = CreateFrame("Frame", nil, self)
-	bu:SetFrameLevel(self:GetFrameLevel() + 2)
-	bu.gap = true
-	bu.initialAnchor = "TOPLEFT"
-	bu["growth-y"] = "DOWN"
-	bu.spacing = 3
-	bu.tooltipAnchor = "ANCHOR_BOTTOMLEFT"
+	if mystyle == "nameplate" then
+		local db = C.db["Nameplate"]
+		local yOffset = db["TargetPower"] and 10 + db["PPBarHeight"] or 5
+		for _, container in ipairs(NAMEPLATE_AURA_CONTAINERS) do
+			local bu = CreateAuraElement(self, {
+				initialAnchor = container.anchor,
+				growthX = container.growthX,
+				growthY = "UP",
+				spacing = 3,
+				groupSpacing = 0,
+				disableMouse = true,
+			})
+			bu.__auraType = "nameplate"
+			bu.__nameplateAuraType = container.auraType
+			bu:SetPoint(container.anchor, self.nameText, container.relativeAnchor, 0, yOffset)
+
+			local layoutIndex = 0
+			for index, group in ipairs(NAMEPLATE_AURA_GROUPS) do
+				if group.auraType == container.auraType then
+					layoutIndex = layoutIndex + 1
+					local settings = NAMEPLATE_AURA_SETTINGS[group.auraType]
+					AddAuraGroup(bu, NAMEPLATE_AURA_GROUP_NAME..index, group.filter, GetNameplateAuraGroupCount(group), layoutIndex, group.candidateFilters, nil, {
+						size = db[settings.size],
+						fontSize = db[settings.fontSize],
+						sizeRatio = db[settings.sizeRatio],
+						showDebuffTypeBorder = db[settings.typeBorder],
+					})
+				end
+			end
+
+			UF:UpdateAuraContainer(self, bu)
+			self[container.element] = bu
+		end
+		return
+	end
+
+	local bu = CreateAuraElement(self, {
+		initialAnchor = "TOPLEFT",
+		growthX = "RIGHT",
+		growthY = "DOWN",
+		spacing = 3,
+	})
 	if auraUFs[mystyle] then
 		bu.__value = auraUFs[mystyle]
 		UF:ConfigureAuras(bu)
 		UF:UpdateAuraDirection(self, bu)
-		bu.FilterAura = UF.UnitCustomFilter
-	elseif mystyle == "nameplate" then
-		bu.initialAnchor = "BOTTOMLEFT"
-		bu["growth-y"] = "UP"
-		if C.db["Nameplate"]["TargetPower"] then
-			bu:SetPoint("BOTTOMLEFT", self.nameText, "TOPLEFT", 0, 10 + C.db["Nameplate"]["PPBarHeight"])
+		AddAuraGroup(bu, "Buffs", bu.buffFilter, bu.numBuffs, 1)
+		if bu.__desaturateOthers then
+			for index, group in ipairs(UNITFRAME_DESATURATED_DEBUFF_GROUPS) do
+				AddAuraGroup(bu, UNITFRAME_DESATURATED_DEBUFF_GROUP_NAME..index, group.filter, GetUnitFrameDesaturatedDebuffCount(bu.numDebuffs, index), index + 1, group.candidateFilters, nil, {
+					desaturated = index == 2,
+					groupSpacing = index == 2 and 0 or (bu.size + 3),
+					showDebuffTypeBorder = bu.showDebuffTypeBorder,
+				})
+			end
 		else
-			bu:SetPoint("BOTTOMLEFT", self.nameText, "TOPLEFT", 0, 5)
+			AddAuraGroup(bu, "Debuffs", bu.debuffFilter, bu.numDebuffs, 2)
 		end
-		bu.numTotal = C.db["Nameplate"]["maxAuras"]
-		bu.size = C.db["Nameplate"]["AuraSize"]
-		bu.fontSize = C.db["Nameplate"]["FontSize"]
-		bu.showDebuffType = C.db["Nameplate"]["DebuffColor"]
-		bu.desaturateDebuff = C.db["Nameplate"]["Desaturate"]
-		bu.gap = false
-		bu.disableMouse = true
-		bu.disableCooldown = true
-		bu.FilterAura = UF.CustomFilter
-		bu.PostUpdateInfo = UF.AurasPostUpdateInfo
 	end
 
-	UF:UpdateAuraContainer(self, bu, bu.numTotal or bu.numBuffs + bu.numDebuffs)
-	bu.showStealableBuffs = true
-	bu.PostCreateButton = UF.PostCreateButton
-	bu.PostUpdateButton = UF.PostUpdateButton
-	bu.PostUpdateGapButton = UF.PostUpdateGapButton
+	UF:UpdateAuraContainer(self, bu)
 
 	self.Auras = bu
 end
 
+local function ConfigureNameplateDebuffs(element)
+	element.num = C.db["Nameplate"]["PlateCC"] and min(C.db["Nameplate"]["NumCC"], 2) or 0
+	element.size = C.db["Nameplate"]["CCSize"]
+	element.fontSize = C.db["Nameplate"]["CCFontSize"]
+	element.showDebuffTypeBorder = false
+	element.sizeRatio = C.db["Nameplate"]["CCSizeRatio"]
+	element.filter = NAMEPLATE_CC_RULE.filter
+end
+
+function UF:UpdateNameplateDebuffs(forceUpdate)
+	local element = self.Debuffs
+	if not element then return end
+
+	ConfigureNameplateDebuffs(element)
+	UF:UpdateAuraContainer(self, element)
+	if forceUpdate ~= false then element:ForceUpdate() end
+end
+
+function UF:CreatePlateDebuffs(self)
+	local bu = CreateAuraElement(self, {
+		initialAnchor = "LEFT",
+		growthX = "RIGHT",
+		growthY = "DOWN",
+		spacing = 3,
+		disableMouse = true,
+	})
+	bu.__auraType = "debuffs"
+	bu:SetPoint("LEFT", self.Health, "RIGHT", 5, 0)
+
+	ConfigureNameplateDebuffs(bu)
+	AddAuraGroup(bu, "Debuffs", bu.filter, bu.num, 1)
+
+	self.Debuffs = bu
+end
+
 function UF:CreateBuffs(self)
-	local bu = CreateFrame("Frame", nil, self)
-	bu:SetPoint("BOTTOMLEFT", self, "TOPLEFT", 0, 5)
-	bu.initialAnchor = "BOTTOMLEFT"
-	bu["growth-x"] = "RIGHT"
-	bu["growth-y"] = "UP"
-	bu.spacing = 3
-	bu.tooltipAnchor = "ANCHOR_BOTTOMLEFT"
+	local mystyle = self.mystyle
+	local value = mystyle == "raid" and "Raid" or mystyle == "arena" and "Arena" or "Boss"
+	local bu = CreateAuraElement(self, {
+		initialAnchor = mystyle == "raid" and "TOPLEFT" or "BOTTOMLEFT",
+		growthX = "RIGHT",
+		growthY = mystyle == "raid" and "DOWN" or "UP",
+		spacing = mystyle == "raid" and 2 or 3,
+		value = value,
+		disableMouse = mystyle == "raid",
+	})
+	bu.__auraType = "buffs"
+	if mystyle == "raid" then
+		bu:SetPoint("TOPLEFT", self, "TOPLEFT", 2, -2)
+	else
+		bu:SetPoint("BOTTOMLEFT", self, "TOPLEFT", 0, 5)
+	end
 
-	bu.__value = "Boss"
 	UF:ConfigureBuffAndDebuff(bu)
-	bu.FilterAura = UF.UnitCustomFilter
-
-	UF:UpdateAuraContainer(self, bu, bu.num)
-	bu.showStealableBuffs = true
-	bu.PostCreateButton = UF.PostCreateButton
-	bu.PostUpdateButton = UF.PostUpdateButton
+	local filterGroups = mystyle == "arena" and ARENA_BUFF_GROUPS[bu.__filterType]
+	if filterGroups then
+		for index, group in ipairs(filterGroups) do
+			AddAuraGroup(bu, ARENA_BUFF_GROUP_NAME..index, group.filter, bu.num, index, group.candidateFilters)
+		end
+	elseif mystyle == "boss" and bu.__filterType == 3 then
+		for index, group in ipairs(BOSS_BUFF_GROUPS) do
+			AddAuraGroup(bu, BOSS_BUFF_GROUP_NAME..index, group.filter, bu.num, index, group.candidateFilters)
+		end
+	else
+		-- Fresh table per frame: Blizzard converts the inbound options in place,
+		-- so the shared template must not be handed over for every raid frame.
+		local candidateFilters = {}
+		if mystyle == "raid" then
+			for key, value in next, RAID_BUFF_GROUP.candidateFilters do
+				candidateFilters[key] = value
+			end
+		end
+		AddAuraGroup(bu, "Buffs", bu.filter, bu.num, 1, candidateFilters)
+	end
+	UF:UpdateAuraContainer(self, bu)
 
 	self.Buffs = bu
 end
 
+function UF:CreateRaidBigDefensives(self)
+	local size = C.db["UFs"]["RaidBigDefensiveSize"]
+	local bu = CreateAuraElement(self, {
+		initialAnchor = "TOPRIGHT",
+		growthX = "LEFT",
+		growthY = "DOWN",
+		fontSize = C.db["UFs"]["RaidBigDefensiveCDSize"],
+		hideDuration = not C.db["UFs"]["RaidBigDefensiveCDText"],
+		disableMouse = true,
+	})
+	bu:SetPoint("TOPLEFT", self)
+	bu.iconSize = size
+	bu.showStealableBorder = false
+	bu.PostCreateButton = PostCreateRaidBigDefensiveButton
+
+	for index, group in ipairs(RAID_BIG_DEFENSIVE_GROUPS) do
+		bu:AddSlot(group.filter, {
+			size = size,
+			sortMethod = AuraContainerSortMethod.BigDefensive,
+			slotIndex = index,
+		})
+	end
+
+	self.BigDefensives = bu
+	UF:UpdateAuraLayoutLimit(self)
+end
+
 function UF:CreateDebuffs(self)
 	local mystyle = self.mystyle
-	local bu = CreateFrame("Frame", nil, self)
-	bu.spacing = 3
-	bu.initialAnchor = "TOPRIGHT"
-	bu["growth-x"] = "LEFT"
-	bu["growth-y"] = "DOWN"
-	bu.tooltipAnchor = "ANCHOR_BOTTOMLEFT"
-	bu.showDebuffType = true
-	bu:SetPoint("TOPRIGHT", self, "TOPLEFT", -5, 0)
-	bu.__value = "Boss"
-	UF:ConfigureBuffAndDebuff(bu, true)
-	bu.FilterAura = UF.UnitCustomFilter
+	local value = mystyle == "raid" and "Raid" or mystyle == "arena" and "Arena" or "Boss"
+	local bu = CreateAuraElement(self, {
+		initialAnchor = mystyle == "raid" and "BOTTOMRIGHT" or "TOPRIGHT",
+		growthX = "LEFT",
+		growthY = mystyle == "raid" and "UP" or "DOWN",
+		spacing = mystyle == "raid" and 2 or 3,
+		value = value,
+		disableMouse = mystyle == "raid",
+	})
+	bu.__auraType = "debuffs"
+	if mystyle == "raid" then
+		bu:SetPoint("BOTTOMRIGHT", self.Health, "BOTTOMRIGHT", -2, 2)
+	else
+		bu:SetPoint("TOPRIGHT", self, "TOPLEFT", -5, 0)
+	end
 
-	UF:UpdateAuraContainer(self, bu, bu.num)
-	bu.PostCreateButton = UF.PostCreateButton
-	bu.PostUpdateButton = UF.PostUpdateButton
+	UF:ConfigureBuffAndDebuff(bu, true)
+	if mystyle == "raid" and bu.__filterType == 2 then
+		for index, group in ipairs(RAID_DEBUFF_GROUPS) do
+			AddAuraGroup(bu, RAID_DEBUFF_GROUP_NAME..index, group.filter, bu.num, index, group.candidateFilters, AuraContainerSortMethod.Default)
+		end
+	elseif mystyle == "arena" and bu.__filterType == 3 then
+		for index, group in ipairs(ARENA_DEBUFF_GROUPS) do
+			AddAuraGroup(bu, ARENA_DEBUFF_GROUP_NAME..index, group.filter, bu.num, index, group.candidateFilters)
+		end
+	else
+		AddAuraGroup(bu, "Debuffs", bu.filter, bu.num, 1)
+	end
+	UF:UpdateAuraContainer(self, bu)
 
 	self.Debuffs = bu
 end
 
 -- Class Powers
-function UF.PostUpdateClassPower(element, cur, max, diff, powerType, chargedPowerPoints)
+function UF.PostUpdateClassPower(element, cur, max, _, diff, _, chargedPowerPoints)
+	element.__max = max
 	if not cur or cur == 0 then
-		for i = 1, 7 do
+		for i = 1, 10 do
 			element[i].bg:Hide()
 		end
-
-		element.prevColor = nil
 	else
 		for i = 1, max do
 			element[i].bg:Show()
 		end
+	end
 
-		element.thisColor = cur == max and 1 or 2
-		if not element.prevColor or element.prevColor ~= element.thisColor then
-			local r, g, b = 1, 0, 0
-			if element.thisColor == 2 then
-				local color = element.__owner.colors.power[powerType]
-				r, g, b = color[1], color[2], color[3]
-			end
-			for i = 1, #element do
-				element[i]:SetStatusBarColor(r, g, b)
-			end
-			element.prevColor = element.thisColor
-		end
+	local isMax = cur == max
+	for i = 1, #element do
+		element[i].cover:SetShown(isMax)
 	end
 
 	if diff then
 		for i = 1, max do
-			element[i]:SetWidth((element.__owner.ClassPowerBar:GetWidth() - (max-1)*C.margin)/max)
+			element[i]:SetWidth((element.__owner.ClassPowerBar.width - (max-1)*C.margin)/max)
 		end
-		for i = max + 1, 7 do
+		for i = max + 1, 10 do
 			element[i].bg:Hide()
 		end
 	end
 
-	for i = 1, 7 do
+	for i = 1, 10 do
 		local bar = element[i]
 		if not bar.chargeStar then break end
 
@@ -1307,17 +1861,30 @@ function UF.PostUpdateClassPower(element, cur, max, diff, powerType, chargedPowe
 	end
 end
 
+function UF.PostVisibilityClassPower(element, shouldEnable)
+	if not shouldEnable then
+		for i = 1, 10 do
+			element[i].bg:Hide()
+		end
+	end
+
+	if element.fragmentsText then
+		element.fragmentsText:SetShown(shouldEnable)
+	end
+end
+
 function UF:OnUpdateRunes(elapsed)
 	local duration = self.duration + elapsed
 	self.duration = duration
 	self:SetValue(duration)
-	self.timer:SetText("")
+	local textStr = ""
 	if C.db["UFs"]["RuneTimer"] then
 		local remain = self.runeDuration - duration
 		if remain > 0 then
-			self.timer:SetText(B.FormatTime(remain))
+			textStr = B.FormatTime(remain)
 		end
 	end
+	self.timer:SetText(textStr)
 end
 
 function UF.PostUpdateRunes(element, runemap)
@@ -1350,9 +1917,11 @@ function UF:CreateClassPower(self)
 	end
 
 	local isDK = DB.MyClass == "DEATHKNIGHT"
-	local maxBar = isDK and 6 or 7
-	local bar = CreateFrame("Frame", "$parentClassPowerBar", self.Health)
+	local isDH = DB.MyClass == "DEMONHUNTER"
+	local maxBar = isDK and 6 or 10
+	local bar = CreateFrame("Frame", "$parentClassPowerBar", self)
 	bar:SetSize(barWidth, barHeight)
+	bar.width = barWidth
 	bar:SetPoint(unpack(barPoint))
 
 	-- show bg while size changed
@@ -1370,17 +1939,24 @@ function UF:CreateClassPower(self)
 		bars[i]:SetWidth((barWidth - (maxBar-1)*C.margin) / maxBar)
 		bars[i]:SetStatusBarTexture(DB.normTex)
 		bars[i]:SetFrameLevel(self:GetFrameLevel() + 5)
-		B.SetBD(bars[i], 0)
 		if i == 1 then
 			bars[i]:SetPoint("BOTTOMLEFT")
 		else
 			bars[i]:SetPoint("LEFT", bars[i-1], "RIGHT", C.margin, 0)
 		end
 
-		bars[i].bg = (isDK and bars[i] or bar):CreateTexture(nil, "BACKGROUND")
+		bars[i].bg = CreateFrame("Frame", nil, (isDK and bars[i] or bar))
 		bars[i].bg:SetAllPoints(bars[i])
-		bars[i].bg:SetTexture(DB.normTex)
-		bars[i].bg.multiplier = .25
+		B.SetBD(bars[i].bg, .7)
+		bars[i].bg:SetShown(isDK)
+
+		if not isDK then
+			bars[i].cover = bars[i]:CreateTexture(nil, "ARTWORK", nil, 5)
+			bars[i].cover:SetAllPoints(bars[i])
+			bars[i].cover:SetTexture(DB.normTex)
+			bars[i].cover:SetVertexColor(1, 0, 0)
+			bars[i].cover:Hide()
+		end
 
 		if isDK then
 			bars[i].timer = B.CreateFS(bars[i], 13, "")
@@ -1399,6 +1975,13 @@ function UF:CreateClassPower(self)
 		end
 	end
 
+	if isDH then
+		local text = B.CreateFS(bars[1], 13)
+		text:SetPoint("CENTER", bars[1], "TOP")
+		self:Tag(text, "[SoulFragments]")
+		bars.fragmentsText = text
+	end
+
 	if isDK then
 		bars.colorSpec = true
 		bars.sortOrder = "asc"
@@ -1407,6 +1990,7 @@ function UF:CreateClassPower(self)
 		self.Runes = bars
 	else
 		bars.PostUpdate = UF.PostUpdateClassPower
+		bars.PostVisibility = UF.PostVisibilityClassPower
 		self.ClassPower = bars
 	end
 
@@ -1423,24 +2007,24 @@ function UF:StaggerBar(self)
 		barPoint = {"BOTTOMLEFT", self, "TOPLEFT", 0, C.margin}
 	end
 
-	local stagger = CreateFrame("StatusBar", nil, self.Health)
+	local stagger = CreateFrame("StatusBar", nil, self)
 	stagger:SetSize(barWidth, barHeight)
 	stagger:SetPoint(unpack(barPoint))
 	stagger:SetStatusBarTexture(DB.normTex)
 	stagger:SetFrameLevel(self:GetFrameLevel() + 5)
 	B.SetBD(stagger, 0)
+	UF:SmoothBar(stagger)
 
 	local bg = stagger:CreateTexture(nil, "BACKGROUND")
 	bg:SetAllPoints()
 	bg:SetTexture(DB.normTex)
-	bg.multiplier = .25
+	bg:SetVertexColor(0, 0, 0, .7)
 
 	local text = B.CreateFS(stagger, 13)
 	text:SetPoint("CENTER", stagger, "TOP")
 	self:Tag(text, "[monkstagger]")
 
 	self.Stagger = stagger
-	self.Stagger.bg = bg
 end
 
 function UF:ToggleUFClassPower()
@@ -1495,6 +2079,7 @@ function UF:UpdateUFClassPower()
 	if bars then
 		local bar = playerFrame.ClassPowerBar
 		bar:SetSize(barWidth, barHeight)
+		bar.width = barWidth
 		bar:SetPoint("BOTTOMLEFT", playerFrame, "TOPLEFT", xOffset, yOffset)
 		if bar.bg then bar.bg:Show() end
 		local max = bars.__max
@@ -1510,19 +2095,6 @@ function UF:UpdateUFClassPower()
 	end
 end
 
-function UF.PostUpdateAltPower(element, _, cur, _, max)
-	if cur and max then
-		local perc = floor((cur/max)*100)
-		if perc < 35 then
-			element:SetStatusBarColor(0, 1, 0)
-		elseif perc < 70 then
-			element:SetStatusBarColor(1, 1, 0)
-		else
-			element:SetStatusBarColor(1, 0, 0)
-		end
-	end
-end
-
 function UF:CreateAltPower(self)
 	local bar = CreateFrame("StatusBar", nil, self)
 	bar:SetStatusBarTexture(DB.normTex)
@@ -1530,13 +2102,14 @@ function UF:CreateAltPower(self)
 	bar:SetPoint("TOPRIGHT", self, "BOTTOMRIGHT", 0, -3)
 	bar:SetHeight(2)
 	B.SetBD(bar, 0)
+	UF:SmoothBar(bar)
 
 	local text = B.CreateFS(bar, 14, "")
 	text:SetJustifyH("CENTER")
 	self:Tag(text, "[altpower]")
 
 	self.AlternativePower = bar
-	self.AlternativePower.PostUpdate = UF.PostUpdateAltPower
+	self.AlternativePower.colorPowerSmooth = true
 end
 
 function UF:CreateExpRepBar(self)
@@ -1557,33 +2130,6 @@ function UF:CreateExpRepBar(self)
 	B:GetModule("Misc"):SetupScript(bar)
 end
 
-function UF:PostUpdatePrediction(_, health, maxHealth, allIncomingHeal, allAbsorb)
-	if not C.db["UFs"]["OverAbsorb"] then
-		self.overAbsorbBar:Hide()
-		return
-	end
-
-	local hasOverAbsorb
-	local overAbsorbAmount = health + allIncomingHeal + allAbsorb - maxHealth
-	if overAbsorbAmount > 0 then
-		if overAbsorbAmount > maxHealth then
-			hasOverAbsorb = true
-			overAbsorbAmount = maxHealth
-		end
-		self.overAbsorbBar:SetMinMaxValues(0, maxHealth)
-		self.overAbsorbBar:SetValue(overAbsorbAmount)
-		self.overAbsorbBar:Show()
-	else
-		self.overAbsorbBar:Hide()
-	end
-
-	if hasOverAbsorb then
-		self.overAbsorb:Show()
-	else
-		self.overAbsorb:Hide()
-	end
-end
-
 function UF:CreatePrediction(self)
 	local frame = CreateFrame("Frame", nil, self)
 	frame:SetAllPoints(self.Health)
@@ -1597,40 +2143,17 @@ function UF:CreatePrediction(self)
 	myBar:SetPoint("LEFT", self.Health:GetStatusBarTexture(), "RIGHT")
 	myBar:SetStatusBarTexture(DB.normTex)
 	myBar:SetStatusBarColor(0, 1, .5, .5)
-	myBar:Hide()
-
-	local otherBar = CreateFrame("StatusBar", nil, frame)
-	otherBar:SetPoint("TOP")
-	otherBar:SetPoint("BOTTOM")
-	otherBar:SetPoint("LEFT", myBar:GetStatusBarTexture(), "RIGHT")
-	otherBar:SetStatusBarTexture(DB.normTex)
-	otherBar:SetStatusBarColor(0, 1, 0, .5)
-	otherBar:Hide()
 
 	local absorbBar = CreateFrame("StatusBar", nil, frame)
 	absorbBar:SetPoint("TOP")
 	absorbBar:SetPoint("BOTTOM")
-	absorbBar:SetPoint("LEFT", otherBar:GetStatusBarTexture(), "RIGHT")
+	absorbBar:SetPoint("LEFT", myBar:GetStatusBarTexture(), "RIGHT")
 	absorbBar:SetStatusBarTexture(DB.bdTex)
 	absorbBar:SetStatusBarColor(.66, 1, 1)
 	absorbBar:SetFrameLevel(frameLevel)
 	absorbBar:SetAlpha(.5)
-	absorbBar:Hide()
 	local tex = absorbBar:CreateTexture(nil, "ARTWORK", nil, 1)
 	tex:SetAllPoints(absorbBar:GetStatusBarTexture())
-	tex:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
-	tex:SetHorizTile(true)
-	tex:SetVertTile(true)
-
-	local overAbsorbBar = CreateFrame("StatusBar", nil, frame)
-	overAbsorbBar:SetAllPoints()
-	overAbsorbBar:SetStatusBarTexture(DB.bdTex)
-	overAbsorbBar:SetStatusBarColor(.66, 1, 1)
-	overAbsorbBar:SetFrameLevel(frameLevel)
-	overAbsorbBar:SetAlpha(.35)
-	overAbsorbBar:Hide()
-	local tex = overAbsorbBar:CreateTexture(nil, "ARTWORK", nil, 1)
-	tex:SetAllPoints(overAbsorbBar:GetStatusBarTexture())
 	tex:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
 	tex:SetHorizTile(true)
 	tex:SetVertTile(true)
@@ -1644,7 +2167,6 @@ function UF:CreatePrediction(self)
 	healAbsorbBar:SetStatusBarColor(1, 0, .5)
 	healAbsorbBar:SetFrameLevel(frameLevel)
 	healAbsorbBar:SetAlpha(.35)
-	healAbsorbBar:Hide()
 	local tex = healAbsorbBar:CreateTexture(nil, "ARTWORK", nil, 1)
 	tex:SetAllPoints(healAbsorbBar:GetStatusBarTexture())
 	tex:SetTexture("Interface\\RaidFrame\\Shield-Overlay", true, true)
@@ -1657,7 +2179,6 @@ function UF:CreatePrediction(self)
 	overAbsorb:SetBlendMode("ADD")
 	overAbsorb:SetPoint("TOPLEFT", self.Health, "TOPRIGHT", -5, 2)
 	overAbsorb:SetPoint("BOTTOMLEFT", self.Health, "BOTTOMRIGHT", -5, -2)
-	overAbsorb:Hide()
 
 	local overHealAbsorb = frame:CreateTexture(nil, "OVERLAY")
 	overHealAbsorb:SetWidth(15)
@@ -1665,34 +2186,27 @@ function UF:CreatePrediction(self)
 	overHealAbsorb:SetBlendMode("ADD")
 	overHealAbsorb:SetPoint("TOPRIGHT", self.Health, "TOPLEFT", 5, 2)
 	overHealAbsorb:SetPoint("BOTTOMRIGHT", self.Health, "BOTTOMLEFT", 5, -2)
-	overHealAbsorb:Hide()
 
 	-- Register with oUF
-	self.HealthPrediction = {
-		myBar = myBar,
-		otherBar = otherBar,
-		absorbBar = absorbBar,
-		healAbsorbBar = healAbsorbBar,
-		overAbsorbBar = overAbsorbBar,
-		overAbsorb = overAbsorb,
-		overHealAbsorb = overHealAbsorb,
-		maxOverflow = 1,
-		PostUpdate = UF.PostUpdatePrediction,
-	}
 	self.predicFrame = frame
+	self.Health.HealingAll = myBar
+	self.Health.DamageAbsorb = absorbBar
+	self.Health.HealAbsorb = healAbsorbBar
+	self.Health.OverDamageAbsorbIndicator = overAbsorb
+	self.Health.OverHealAbsorbIndicator = overHealAbsorb
 end
 
 function UF.PostUpdateAddPower(element, cur, max)
 	if element.Text and max > 0 then
-		local perc = cur/max * 100
+		--[[local perc = cur/max * 100
 		if perc > 95 then
 			perc = ""
 			element:SetAlpha(0)
 		else
 			perc = format("%d%%", perc)
 			element:SetAlpha(1)
-		end
-		element.Text:SetText(perc)
+		end]]
+		element.Text:SetText(B.Numb(cur))
 	end
 end
 
@@ -1704,12 +2218,12 @@ function UF:CreateAddPower(self)
 	bar:SetStatusBarTexture(DB.normTex)
 	B.SetBD(bar, 0)
 	bar.colorPower = true
-	B:SmoothBar(bar)
+	UF:SmoothBar(bar)
 
 	local bg = bar:CreateTexture(nil, "BACKGROUND")
 	bg:SetAllPoints()
 	bg:SetTexture(DB.normTex)
-	bg.multiplier = .25
+	bg:SetVertexColor(0, 0, 0, .7)
 	local text = B.CreateFS(bar, 12, "", false, "CENTER", 1, -3)
 
 	self.AdditionalPower = bar
@@ -1745,109 +2259,6 @@ function UF:ToggleAddPower()
 	end
 end
 
-function UF:ToggleSwingBars()
-	local frame = _G.oUF_Player
-	if not frame then return end
-
-	if C.db["UFs"]["SwingBar"] then
-		if not frame:IsElementEnabled("Swing") then
-			frame:EnableElement("Swing")
-		end
-	elseif frame:IsElementEnabled("Swing") then
-		frame:DisableElement("Swing")
-	end
-end
-
-function UF:CreateSwing(self)
-	local width, height = C.db["UFs"]["SwingWidth"], C.db["UFs"]["SwingHeight"]
-
-	local bar = CreateFrame("Frame", nil, self)
-	bar:SetSize(width, height)
-	bar.mover = B.Mover(bar, L["UFs SwingBar"], "Swing", {"BOTTOM", UIParent, "BOTTOM", 0, 170})
-	bar:ClearAllPoints()
-	bar:SetPoint("CENTER", bar.mover)
-
-	local two = CreateFrame("StatusBar", nil, bar)
-	two:Hide()
-	two:SetAllPoints()
-	B.CreateSB(two, true, .8, .8, .8)
-
-	local main = CreateFrame("StatusBar", nil, bar)
-	main:Hide()
-	main:SetAllPoints()
-	B.CreateSB(main, true, .8, .8, .8)
-
-	local off = CreateFrame("StatusBar", nil, bar)
-	off:Hide()
-	if C.db["UFs"]["OffOnTop"] then
-		off:SetPoint("BOTTOMLEFT", bar, "TOPLEFT", 0, 3)
-		off:SetPoint("BOTTOMRIGHT", bar, "TOPRIGHT", 0, 3)
-	else
-		off:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -3)
-		off:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, -3)
-	end
-	off:SetHeight(height)
-	B.CreateSB(off, true, .8, .8, .8)
-
-	bar.Text = B.CreateFS(bar, 12, "")
-	bar.Text:SetShown(C.db["UFs"]["SwingTimer"])
-	bar.TextMH = B.CreateFS(main, 12, "")
-	bar.TextMH:SetShown(C.db["UFs"]["SwingTimer"])
-	bar.TextOH = B.CreateFS(off, 12, "")
-	bar.TextOH:SetShown(C.db["UFs"]["SwingTimer"])
-
-	self.Swing = bar
-	self.Swing.Twohand = two
-	self.Swing.Mainhand = main
-	self.Swing.Offhand = off
-	self.Swing.hideOoc = true
-end
-
-local scrolls = {}
-function UF:UpdateScrollingFont()
-	local fontSize = C.db["UFs"]["FCTFontSize"]
-	for _, scroll in pairs(scrolls) do
-		B.SetFontSize(scroll, fontSize)
-		scroll:SetSize(10*fontSize, 10*fontSize)
-	end
-end
-
-function UF:CreateFCT(self)
-	if not C.db["UFs"]["CombatText"] then return end
-
-	local parentFrame = CreateFrame("Frame", nil, UIParent)
-	local parentName = self:GetName()
-	local fcf = CreateFrame("Frame", parentName.."CombatTextFrame", parentFrame)
-	fcf:SetSize(32, 32)
-	if self.mystyle == "player" then
-		B.Mover(fcf, L["CombatText"], "PlayerCombatText", {"BOTTOM", self, "TOPLEFT", 0, 120})
-	else
-		B.Mover(fcf, L["CombatText"], "TargetCombatText", {"BOTTOM", self, "TOPRIGHT", 0, 120})
-	end
-
-	for i = 1, 36 do
-		fcf[i] = parentFrame:CreateFontString("$parentText", "OVERLAY")
-	end
-
-	local scrolling = CreateFrame("ScrollingMessageFrame", parentName.."CombatTextScrollingFrame", parentFrame)
-	scrolling:SetSpacing(3)
-	scrolling:SetMaxLines(20)
-	scrolling:SetFadeDuration(.2)
-	scrolling:SetTimeVisible(3)
-	scrolling:SetJustifyH("CENTER")
-	scrolling:SetPoint("BOTTOM", fcf)
-	fcf.Scrolling = scrolling
-	tinsert(scrolls, scrolling)
-
-	fcf.font = DB.Font[1]
-	fcf.fontFlags = DB.Font[3]
-	fcf.abbreviateNumbers = true
-	self.FloatingCombatFeedback = fcf
-
-	-- Default CombatText
-	SetCVar("enableFloatingCombatText", 0)
-end
-
 function UF:CreatePVPClassify(self)
 	local bu = self:CreateTexture(nil, "ARTWORK")
 	bu:SetSize(30, 30)
@@ -1876,62 +2287,4 @@ function UF:CreateQuestSync(self)
 	self:RegisterEvent("QUEST_SESSION_LEFT", updatePartySync, true)
 	self:RegisterEvent("QUEST_SESSION_JOINED", updatePartySync, true)
 	self:RegisterEvent("PLAYER_ENTERING_WORLD", updatePartySync, true)
-end
-
--- Demonic Gateway
-local GatewayTexs = {
-	[59262] = 607512, -- green
-	[59271] = 607513, -- purple
-}
-local function DGI_UpdateGlow()
-	local frame = _G.oUF_Focus
-	if not frame then return end
-
-	local element = frame.DemonicGatewayIndicator
-	if element:IsShown() and IsItemInRange(37727, "focus") then
-		B.ShowOverlayGlow(element.glowFrame)
-	else
-		B.HideOverlayGlow(element.glowFrame)
-	end
-end
-
-local function DGI_Visibility()
-	local frame = _G.oUF_Focus
-	if not frame then return end
-
-	local element = frame.DemonicGatewayIndicator
-	local guid = UnitGUID("focus")
-	local npcID = guid and B.GetNPCID(guid)
-	local isGate = npcID and GatewayTexs[npcID]
-
-	element:SetTexture(isGate)
-	element:SetShown(isGate)
-	element.updater:SetShown(isGate)
-	DGI_UpdateGlow()
-end
-
-local function DGI_OnUpdate(self, elapsed)
-	self.elapsed = (self.elapsed or 0) + elapsed
-	if self.elapsed > .1 then
-		DGI_UpdateGlow()
-
-		self.elapsed = 0
-	end
-end
-
-function UF:DemonicGatewayIcon(self)
-	local icon = self:CreateTexture(nil, "ARTWORK")
-	icon:SetPoint("CENTER")
-	icon:SetSize(22, 22)
-	icon:SetTexture(607512) -- 607513 for purple
-	icon:SetTexCoord(unpack(DB.TexCoord))
-	icon.glowFrame = B.CreateGlowFrame(self, 22)
-
-	local updater = CreateFrame("Frame")
-	updater:SetScript("OnUpdate", DGI_OnUpdate)
-	updater:Hide()
-
-	self.DemonicGatewayIndicator = icon
-	self.DemonicGatewayIndicator.updater = updater
-	B:RegisterEvent("PLAYER_FOCUS_CHANGED", DGI_Visibility)
 end

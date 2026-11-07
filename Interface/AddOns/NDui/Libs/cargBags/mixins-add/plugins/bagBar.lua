@@ -166,12 +166,11 @@ function BagButton:OnClick(btn)
 		if(self.bar.isGlobal) then
 			for _, container in pairs(container.implementation.contByID) do
 				container:SetFilter(self.filter, self.hidden)
-				container.implementation:OnEvent("BAG_UPDATE", self.bagId)
 			end
 		else
 			container:SetFilter(self.filter, self.hidden)
-			container.implementation:OnEvent("BAG_UPDATE", self.bagId)
 		end
+		container.implementation:OnEvent("BAG_UPDATE", self.bagId)
 	end
 end
 BagButton.OnReceiveDrag = BagButton.OnClick
@@ -188,10 +187,6 @@ local function updater(self)
 end
 
 local function onLock(self, _, bagID, slotID)
-	if(bagID == -1 and slotID > NUM_BANKGENERIC_SLOTS) then
-		bagID, slotID = ContainerIDToInventoryID(slotID - NUM_BANKGENERIC_SLOTS + maxBagSlots)
-	end
-
 	if(slotID) then return end
 
 	for _, button in pairs(self.buttons) do
@@ -231,7 +226,6 @@ cargBags:RegisterPlugin("BagBar", function(self, bags)
 	end
 
 	self.implementation:RegisterEvent("BAG_UPDATE", bar, updater)
-	self.implementation:RegisterEvent("PLAYERBANKBAGSLOTS_CHANGED", bar, updater)
 	self.implementation:RegisterEvent("ITEM_LOCK_CHANGED", bar, onLock)
 
 	return bar

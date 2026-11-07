@@ -12,35 +12,39 @@ local HEIRLOOMS = _G.HEIRLOOMS
 local levelPrefix = STAT_AVERAGE_ITEM_LEVEL..": "..DB.InfoColor
 local isPending = LFG_LIST_LOADING
 local resetTime, frequency = 900, .5
-local cache, weapon, currentUNIT, currentGUID = {}, {}
+local inspectFrameLockTime, inspectNotifyLockTime = 10, 3
+local cache, weapon, currentUNIT, currentGUID, inspectGUID = {}, {}
+local updater
+local inspectFrameTime, inspectNotifyTime = 0, 0
+local tooltipInspecting
 
 TT.TierSets = {
-	-- HUNTER
-	[212023] = true, [212021] = true, [212020] = true, [212019] = true, [212018] = true,
 	-- WARRIOR
-	[211987] = true, [211985] = true, [211984] = true, [211983] = true, [211982] = true,
-	-- PALADIN
-	[211996] = true, [211994] = true, [211993] = true, [211992] = true, [211991] = true,
-	-- ROGUE
-	[212041] = true, [212039] = true, [212038] = true, [212037] = true, [212036] = true,
-	-- PRIEST
-	[212084] = true, [212083] = true, [212082] = true, [212086] = true, [212081] = true,
-	-- DK
-	[212005] = true, [212003] = true, [212002] = true, [212001] = true, [212000] = true,
-	-- SHAMAN
-	[212014] = true, [212012] = true, [212011] = true, [212010] = true, [212009] = true,
-	-- MAGE
-	[212095] = true, [212093] = true, [212092] = true, [212091] = true, [212090] = true,
-	-- WARLOCK
-	[212075] = true, [212074] = true, [212073] = true, [212077] = true, [212072] = true,
-	-- MONK
-	[212050] = true, [212048] = true, [212047] = true, [212046] = true, [212045] = true,
-	-- DRUID
-	[212059] = true, [212057] = true, [212056] = true, [212055] = true, [212054] = true,
-	-- DH
-	[212068] = true, [212066] = true, [212065] = true, [212064] = true, [212063] = true,
-	-- EVOKER
-	[212032] = true, [212030] = true, [212029] = true, [212028] = true, [212027] = true,
+    [271454] = true, [271455] = true, [271456] = true, [271457] = true, [271459] = true,
+    -- PALADIN
+    [271463] = true, [271464] = true, [271465] = true, [271466] = true, [271468] = true,
+    -- HUNTER
+    [271490] = true, [271491] = true, [271492] = true, [271493] = true, [271495] = true,
+    -- ROGUE
+    [271508] = true, [271509] = true, [271510] = true, [271511] = true, [271513] = true,
+    -- PRIEST
+    [271553] = true, [271554] = true, [271555] = true, [271556] = true, [271558] = true,
+    -- DEATHKNIGHT
+    [271472] = true, [271473] = true, [271474] = true, [271475] = true, [271477] = true,
+    -- SHAMAN
+    [271481] = true, [271482] = true, [271483] = true, [271484] = true, [271486] = true,
+    -- MAGE
+    [271562] = true, [271563] = true, [271564] = true, [271565] = true, [271567] = true,
+    -- WARLOCK
+    [271544] = true, [271545] = true, [271546] = true, [271547] = true, [271549] = true,
+    -- MONK
+    [271517] = true, [271518] = true, [271519] = true, [271520] = true, [271522] = true,
+    -- DRUID
+    [271526] = true, [271527] = true, [271528] = true, [271529] = true, [271531] = true,
+    -- DEMONHUNTER
+    [271535] = true, [271536] = true, [271537] = true, [271538] = true, [271540] = true,
+    -- EVOKER
+    [271499] = true, [271500] = true, [271501] = true, [271502] = true, [271504] = true,
 }
 
 local formatSets = {
@@ -51,39 +55,107 @@ local formatSets = {
 	[5] = " |cffc745f9(5/5)", -- purple
 }
 
+local function checkUnitGUID(unit)
+	local guid = UnitGUID(unit)
+	return B:NotSecretValue(guid) and guid
+end
+
+local function StopInspectUpdate(clearGUID)
+	if updater then updater:Hide() end
+	if clearGUID then inspectGUID = nil end
+end
+
+local function CancelInspectUpdate()
+	StopInspectUpdate(true)
+	if TT.GetInspectInfo then
+		B:UnregisterEvent("INSPECT_READY", TT.GetInspectInfo)
+	end
+end
+
+local function InspectFrameIsBusy()
+	local now = GetTime()
+	if inspectFrameTime > 0 and now - inspectFrameTime < inspectFrameLockTime then return true end
+	if inspectNotifyTime > 0 and now - inspectNotifyTime < inspectNotifyLockTime then return true end
+
+	return InspectFrame and InspectFrame:IsShown()
+end
+
+local function OnInspectUnit()
+	inspectFrameTime = GetTime()
+	CancelInspectUpdate()
+end
+
+local function HookInspectUnit()
+	if not InspectUnit or TT.inspectUnitHooked then return end
+
+	hooksecurefunc("InspectUnit", OnInspectUnit)
+	TT.inspectUnitHooked = true
+end
+
+local function OnInspectUILoaded(event, addon)
+	if addon ~= "Blizzard_InspectUI" then return end
+
+	HookInspectUnit()
+	B:UnregisterEvent(event, OnInspectUILoaded)
+end
+
+hooksecurefunc("NotifyInspect", function()
+	if not tooltipInspecting then
+		inspectNotifyTime = GetTime()
+		CancelInspectUpdate()
+	end
+end)
+
 function TT:InspectOnUpdate(elapsed)
 	self.elapsed = (self.elapsed or frequency) + elapsed
 	if self.elapsed > frequency then
 		self.elapsed = 0
-		self:Hide()
-		ClearInspectPlayer()
 
-		if currentUNIT and UnitGUID(currentUNIT) == currentGUID then
+		if currentUNIT and checkUnitGUID(currentUNIT) == currentGUID then
+			if InspectFrameIsBusy() then
+				CancelInspectUpdate()
+				return
+			end
+
 			B:RegisterEvent("INSPECT_READY", TT.GetInspectInfo)
+			inspectGUID = currentGUID
+			StopInspectUpdate()
+			tooltipInspecting = true
 			NotifyInspect(currentUNIT)
+			tooltipInspecting = nil
+		else
+			CancelInspectUpdate()
 		end
 	end
 end
 
-local updater = CreateFrame("Frame")
+updater = CreateFrame("Frame")
 updater:SetScript("OnUpdate", TT.InspectOnUpdate)
 updater:Hide()
+
+HookInspectUnit()
+if not TT.inspectUnitHooked then
+	B:RegisterEvent("ADDON_LOADED", OnInspectUILoaded)
+end
 
 local lastTime = 0
 function TT:GetInspectInfo(...)
 	if self == "UNIT_INVENTORY_CHANGED" then
+		if InCombatLockdown() then return end
 		local thisTime = GetTime()
 		if thisTime - lastTime > .1 then
 			lastTime = thisTime
 
 			local unit = ...
-			if UnitGUID(unit) == currentGUID then
+			if checkUnitGUID(unit) == currentGUID then
 				TT:InspectUnit(unit, true)
 			end
 		end
 	elseif self == "INSPECT_READY" then
 		local guid = ...
-		if guid == currentGUID then
+		if B:NotSecretValue(guid) and guid == currentGUID and guid == inspectGUID then
+			inspectGUID = nil
+
 			local level = TT:GetUnitItemLevel(currentUNIT)
 			cache[guid].level = level
 			cache[guid].getTime = GetTime()
@@ -93,6 +165,12 @@ function TT:GetInspectInfo(...)
 			else
 				TT:InspectUnit(currentUNIT, true)
 			end
+
+			if not InspectFrameIsBusy() then
+				ClearInspectPlayer()
+			end
+		else
+			inspectGUID = nil
 		end
 		B:UnregisterEvent(self, TT.GetInspectInfo)
 	end
@@ -100,14 +178,13 @@ end
 B:RegisterEvent("UNIT_INVENTORY_CHANGED", TT.GetInspectInfo)
 
 function TT:SetupItemLevel(level)
-	local _, unit = GameTooltip:GetUnit()
-	if not unit or UnitGUID(unit) ~= currentGUID then return end
+	if not TT:UnitExists("mouseover") or UnitGUID("mouseover") ~= currentGUID then return end
 
 	local levelLine
 	for i = 2, GameTooltip:NumLines() do
 		local line = _G["GameTooltipTextLeft"..i]
 		local text = line:GetText()
-		if text and strfind(text, levelPrefix) then
+		if text and B:NotSecretValue(text) and strfind(text, levelPrefix) then
 			levelLine = line
 		end
 	end
@@ -121,7 +198,7 @@ function TT:SetupItemLevel(level)
 end
 
 function TT:GetUnitItemLevel(unit)
-	if not unit or UnitGUID(unit) ~= currentGUID then return end
+	if not unit or checkUnitGUID(unit) ~= currentGUID then return end
 
 	local class = select(2, UnitClass(unit))
 	local ilvl, boa, total, haveWeapon, twohand, sets = 0, 0, 0, 0, 0, 0
@@ -231,7 +308,7 @@ function TT:InspectUnit(unit, forced)
 		level = self:GetUnitItemLevel("player")
 		self:SetupItemLevel(level)
 	else
-		if not unit or UnitGUID(unit) ~= currentGUID then return end
+		if not unit or checkUnitGUID(unit) ~= currentGUID then return end
 		if not UnitIsPlayer(unit) then return end
 
 		local currentDB = cache[currentGUID]
@@ -241,7 +318,7 @@ function TT:InspectUnit(unit, forced)
 		if not C.db["Tooltip"]["SpecLevelByShift"] and IsShiftKeyDown() then forced = true end
 		if level and not forced and (GetTime() - currentDB.getTime < resetTime) then updater.elapsed = frequency return end
 		if not UnitIsVisible(unit) or UnitIsDeadOrGhost("player") or UnitOnTaxi("player") then return end
-		if InspectFrame and InspectFrame:IsShown() then return end
+		if InspectFrameIsBusy() then return end
 
 		self:SetupItemLevel()
 		updater:Show()
@@ -252,7 +329,7 @@ function TT:InspectUnitItemLevel(unit)
 	if C.db["Tooltip"]["SpecLevelByShift"] and not IsShiftKeyDown() then return end
 
 	if not unit or not CanInspect(unit) then return end
-	currentUNIT, currentGUID = unit, UnitGUID(unit)
+	currentUNIT, currentGUID = unit, checkUnitGUID(unit)
 	if not cache[currentGUID] then cache[currentGUID] = {} end
 
 	TT:InspectUnit(unit)

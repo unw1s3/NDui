@@ -207,9 +207,9 @@ function G:CreateProfileBar(parent, index)
 	if index == 1 then
 		B.PixelIcon(icon, nil, true) -- character
 		SetPortraitTexture(icon.Icon, "player")
+		icon.Icon:SetTexCoord(.15, .85, .15, .85)
 	else
-		B.PixelIcon(icon, 235423, true) -- share
-		icon.Icon:SetTexCoord(.6, .9, .1, .4)
+		B.PixelIcon(icon, "Interface\\Icons\\RaceChange", true) -- share
 		icon.index = index
 		G:FindProfleUser(icon)
 		icon:SetScript("OnEnter", G.Icon_OnEnter)
@@ -238,7 +238,7 @@ function G:CreateProfileBar(parent, index)
 	reset:SetScript("OnClick", G.Reset_OnClick)
 	bar.reset = reset
 
-	local apply = G:CreateProfileIcon(bar, 2, "Interface\\RAIDFRAME\\ReadyCheck-Ready", L["SelectProfile"], L["SelectProfileTip"])
+	local apply = G:CreateProfileIcon(bar, 2, "Atlas:common-icon-checkmark", L["SelectProfile"], L["SelectProfileTip"])
 	apply:SetScript("OnClick", G.Apply_OnClick)
 	bar.apply = apply
 
@@ -381,17 +381,15 @@ local accountStrValues = {
 	["IgnoredButtons"] = true,
 }
 
-local spellBooleanValues = {
-	["RaidBuffsWhite"] = true,
-	["RaidDebuffsBlack"] = true,
-	["NameplateWhite"] = true,
-	["NameplateBlack"] = true,
-}
-
 local booleanTable = {
 	["CustomUnits"] = true,
-	["PowerUnits"] = true,
 	["DotSpells"] = true,
+}
+
+local profileBooleanValues = {
+	["Reset4"] = true,
+	["Reset5"] = true,
+	["Reset6"] = true,
 }
 
 function G:ExportGUIData()
@@ -405,26 +403,7 @@ function G:ExportGUIData()
 						for k, v in pairs(value) do
 							text = text..":"..k..":"..v
 						end
-					elseif KEY == "AuraWatchList" then
-						if key == "Switcher" then
-							for k, v in pairs(value) do
-								text = text..";"..KEY..":"..key..":"..k..":"..tostring(v)
-							end
-						elseif key == "IgnoreSpells" then
-							text = text..";"..KEY..":"..key
-							for spellID in pairs(value) do
-								text = text..":"..tostring(spellID)
-							end
-						else
-							for spellID, k in pairs(value) do
-								text = text..";"..KEY..":"..key..":"..spellID
-								if k[5] == nil then k[5] = false end
-								for _, v in ipairs(k) do
-									text = text..":"..tostring(v)
-								end
-							end
-						end
-					elseif KEY == "Mover" or KEY == "InternalCD" or KEY == "AuraWatchMover" then
+					elseif KEY == "Mover" then
 						text = text..";"..KEY..":"..key
 						for _, v in ipairs(value) do
 							text = text..":"..tostring(v)
@@ -446,22 +425,13 @@ function G:ExportGUIData()
 					end
 				end
 			end
+		elseif profileBooleanValues[KEY] then
+			text = text..";PROFILE:"..KEY..":"..tostring(VALUE)
 		end
 	end
 
 	for KEY, VALUE in pairs(NDuiADB) do
-		if spellBooleanValues[KEY] then
-			text = text..";ACCOUNT:"..KEY
-			for spellID, value in pairs(VALUE) do
-				text = text..":"..spellID..":"..tostring(value)
-			end
-		elseif KEY == "RaidDebuffs" then
-			for instName, value in pairs(VALUE) do
-				for spellID, prio in pairs(value) do
-					text = text..";ACCOUNT:"..KEY..":"..instName..":"..spellID..":"..prio
-				end
-			end
-		elseif KEY == "CornerSpells" then
+		if KEY == "CornerSpells" then
 			text = text..";ACCOUNT:"..KEY
 			for class, value in pairs(VALUE) do
 				if class == DB.MyClass then
@@ -531,20 +501,12 @@ local function reloadDefaultSettings()
 	C.db["BFA"] = true -- don't empty data on next loading
 end
 
-local function IsOldProfileVersion(version)
-	local major, minor, patch = strsplit(".", version)
-	major = tonumber(major)
-	minor = tonumber(minor)
-	patch = tonumber(patch)
-	return major < 7 and (minor < 23 or (minor == 23 and patch < 2))
-end
-
 function G:ImportGUIData()
 	local profile = G.ProfileDataFrame.editBox:GetText()
 	if B:IsBase64(profile) then profile = B:Decode(profile) end
 	local options = {strsplit(";", profile)}
-	local title, version, _, class = strsplit(":", options[1])
-	if title ~= "NDuiSettings" or IsOldProfileVersion(version) then
+	local title, version = strsplit(":", options[1])
+	if title ~= "NDuiSettings" then
 		UIErrorsFrame:AddMessage(DB.InfoColor..L["Import data error"])
 		return
 	end
@@ -558,6 +520,10 @@ function G:ImportGUIData()
 		if arg1 == "true" or arg1 == "false" then
 			if key == "ACCOUNT" then
 				NDuiADB[value] = toBoolean(arg1)
+			elseif key == "PROFILE" then
+				if profileBooleanValues[value] then
+					C.db[value] = toBoolean(arg1)
+				end
 			else
 				C.db[key][value] = toBoolean(arg1)
 			end
@@ -570,28 +536,6 @@ function G:ImportGUIData()
 					C.db[key][value][colors[i]] = tonumber(colors[i+1])
 				end
 			end
-		elseif key == "AuraWatchList" then
-			if value == "Switcher" then
-				local index, state = select(3, strsplit(":", option))
-				C.db[key][value][tonumber(index)] = toBoolean(state)
-			elseif value == "IgnoreSpells" then
-				local spells = {select(3, strsplit(":", option))}
-				for _, spellID in next, spells do
-					C.db[key][value][tonumber(spellID)] = true
-				end
-			else
-				local idType, spellID, unit, caster, stack, amount, timeless, combat, text, flash = select(4, strsplit(":", option))
-				value = tonumber(value)
-				arg1 = tonumber(arg1)
-				spellID = tonumber(spellID)
-				stack = tonumber(stack)
-				amount = toBoolean(amount)
-				timeless = toBoolean(timeless)
-				combat = toBoolean(combat)
-				flash = toBoolean(flash)
-				if not C.db[key][value] then C.db[key][value] = {} end
-				C.db[key][value][arg1] = {idType, spellID, unit, caster, stack, amount, timeless, combat, text, flash}
-			end
 		elseif booleanTable[value] then
 			local results = {select(3, strsplit(":", option))}
 			for i = 1, #results, 2 do
@@ -602,18 +546,12 @@ function G:ImportGUIData()
 			for i = 1, #results, 2 do
 				C.db[key][value][tonumber(results[i])] = tonumber(results[i+1]) or results[i+1]
 			end
-		elseif key == "Mover" or key == "AuraWatchMover" then
+		elseif key == "Mover" then
 			local relFrom, parent, relTo, x, y = select(3, strsplit(":", option))
 			value = tonumber(value) or value
 			x = tonumber(x)
 			y = tonumber(y)
 			C.db[key][value] = {relFrom, parent, relTo, x, y}
-		elseif key == "InternalCD" then
-			local spellID, duration, indicator, unit, itemID = select(3, strsplit(":", option))
-			spellID = tonumber(spellID)
-			duration = tonumber(duration)
-			itemID = tonumber(itemID)
-			C.db[key][spellID] = {spellID, duration, indicator, unit, itemID}
 		elseif value == "InfoStrLeft" or value == "InfoStrRight" or accountStrValues[value] then
 			if key == "ACCOUNT" then
 				NDuiADB[value] = arg1
@@ -621,16 +559,7 @@ function G:ImportGUIData()
 				C.db[key][value] = arg1
 			end
 		elseif key == "ACCOUNT" then
-			if spellBooleanValues[value] then
-				local results = {select(3, strsplit(":", option))}
-				for i = 1, #results, 2 do
-					NDuiADB[value][tonumber(results[i])] = toBoolean(results[i+1])
-				end
-			elseif value == "RaidDebuffs" then
-				local instName, spellID, priority = select(3, strsplit(":", option))
-				if not NDuiADB[value][instName] then NDuiADB[value][instName] = {} end
-				NDuiADB[value][instName][tonumber(spellID)] = tonumber(priority)
-			elseif value == "CornerSpells" then
+			if value == "CornerSpells" then
 				local results = {select(3, strsplit(":", option))}
 				local class = results[1]
 				if class == DB.MyClass then

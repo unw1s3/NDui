@@ -1,12 +1,11 @@
 local _, ns = ...
 local B, C, L, DB = unpack(ns)
-local oUF = ns.oUF
 if not C.Infobar.Durability then return end
 
 local module = B:GetModule("Infobar")
 local info = module:RegisterInfobar("Dura", C.Infobar.DurabilityPos)
 
-local format, sort, floor, select = string.format, table.sort, math.floor, select
+local format, sort, floor = string.format, table.sort, math.floor
 local GetInventoryItemLink, GetInventoryItemDurability, GetInventoryItemTexture = GetInventoryItemLink, GetInventoryItemDurability, GetInventoryItemTexture
 local GetMoney, GetRepairAllCost, RepairAllItems, CanMerchantRepair = GetMoney, GetRepairAllCost, RepairAllItems, CanMerchantRepair
 local GetAverageItemLevel, IsInGuild, CanGuildBankRepair, GetGuildBankWithdrawMoney = GetAverageItemLevel, IsInGuild, CanGuildBankRepair, GetGuildBankWithdrawMoney
@@ -80,7 +79,7 @@ local function isLowDurability()
 end
 
 local function getDurabilityColor(cur, max)
-	local r, g, b = oUF:RGBColorGradient(cur, max, 1, 0, 0, 1, 1, 0, 0, 1, 0)
+	local r, g, b = B:RGBColorGradient(cur, max, 1, 0, 0, 1, 1, 0, 0, 1, 0)
 	return r, g, b
 end
 
@@ -88,9 +87,14 @@ info.eventList = {
 	"UPDATE_INVENTORY_DURABILITY", "PLAYER_ENTERING_WORLD",
 }
 
+local function refreshInfo()
+	info:onEvent()
+end
+
 info.onEvent = function(self, event)
 	if event == "PLAYER_ENTERING_WORLD" then
-		self:UnregisterEvent(event)
+		C_Timer_After(1, refreshInfo)
+		return
 	end
 
 	if event == "PLAYER_REGEN_ENABLED" then
@@ -114,12 +118,17 @@ info.onEvent = function(self, event)
 	end
 end
 
+C_Timer_After(5, function()
+	if not info.text then return end
+	info:onEvent("PLAYER_ENTERING_WORLD")
+end)
+
 info.onMouseUp = function(self, btn)
 	if btn == "MiddleButton" then
 		NDuiADB["RepairType"] = mod(NDuiADB["RepairType"] + 1, 3)
 		self:onEnter()
 	else
-		--if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
+		if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
 		ToggleCharacter("PaperDollFrame")
 	end
 end

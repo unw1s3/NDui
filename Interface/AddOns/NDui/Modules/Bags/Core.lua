@@ -7,16 +7,15 @@ local ipairs, strmatch, unpack, ceil = ipairs, string.match, unpack, math.ceil
 local C_NewItems_IsNewItem, C_NewItems_RemoveNewItem, C_Timer_After = C_NewItems.IsNewItem, C_NewItems.RemoveNewItem, C_Timer.After
 local C_AzeriteEmpoweredItem_IsAzeriteEmpoweredItemByID = C_AzeriteEmpoweredItem.IsAzeriteEmpoweredItemByID
 local C_Soulbinds_IsItemConduitByItemInfo = C_Soulbinds.IsItemConduitByItemInfo
-local IsControlKeyDown, IsAltKeyDown, IsShiftKeyDown, DeleteCursorItem = IsControlKeyDown, IsAltKeyDown, IsShiftKeyDown, DeleteCursorItem
+local IsControlKeyDown, IsAltKeyDown, DeleteCursorItem = IsControlKeyDown, IsAltKeyDown, DeleteCursorItem
 local GetContainerItemID = C_Container.GetContainerItemID
 local GetContainerNumSlots = C_Container.GetContainerNumSlots
 local SortBags = C_Container.SortBags
 local SortBankBags = C_Container.SortBankBags
-local SortReagentBankBags = C_Container.SortReagentBankBags
 local PickupContainerItem = C_Container.PickupContainerItem
 local SplitContainerItem = C_Container.SplitContainerItem
 local IsAddOnLoaded = C_AddOns.IsAddOnLoaded
-local CHAR_BANK_TYPE = Enum.BankType.Character or 1
+local CHAR_BANK_TYPE = Enum.BankType.Character or 0
 local ACCOUNT_BANK_TYPE = Enum.BankType.Account or 2
 
 local sortCache = {}
@@ -39,70 +38,163 @@ function module:ReverseSort()
 	module:UpdateAllBags()
 end
 
+local function CheckForBagReagent(name)
+	return not (name == "BagReagent" and GetContainerNumSlots(5) == 0)
+end
+
+-- 分类滚动列表
+local categoryScroll = {}	-- [bagType] = { scroll, child }
+local compactLayout
 local anchorCache = {}
 
-local function CheckForBagReagent(name)
-	local pass = true
-	if name == "BagReagent" and GetContainerNumSlots(5) == 0 then
-		pass = false
-	end
-	return pass
+local function HasContainerItems(container)
+	return #container.buttons > 0 or (container.freeSlot and container.freeSlot:IsShown())
 end
 
-function module:UpdateBagsAnchor(parent, bags)
+local function UpdateClassicLayout(parent, bags, bagType)
 	wipe(anchorCache)
-
 	local index = 1
-	local perRow = C.db["Bags"]["BagsPerRow"]
+	local perRow = C.db["Bags"][bagType == "Bag" and "BagsPerRow" or "BankPerRow"]
 	anchorCache[index] = parent
 
-	for i = 1, #bags do
-		local bag = bags[i]
-		if bag:GetHeight() > 45 and CheckForBagReagent(bag.name) then
-			bag:Show()
+	for _, container in ipairs(bags) do
+		if HasContainerItems(container) and CheckForBagReagent(container.name) then
+			container:Show()
 			index = index + 1
-
-			bag:ClearAllPoints()
-			if (index-1) % perRow == 0 then
-				bag:SetPoint("BOTTOMRIGHT", anchorCache[index-perRow], "BOTTOMLEFT", -5, 0)
-			else
-				bag:SetPoint("BOTTOMLEFT", anchorCache[index-1], "TOPLEFT", 0, 5)
-			end
-			anchorCache[index] = bag
-		else
-			bag:Hide()
-		end
-	end
-end
-
-function module:UpdateBankAnchor(parent, bags)
-	wipe(anchorCache)
-
-	local index = 1
-	local perRow = C.db["Bags"]["BankPerRow"]
-	anchorCache[index] = parent
-
-	for i = 1, #bags do
-		local bag = bags[i]
-		if bag:GetHeight() > 45 then
-			bag:Show()
-			index = index + 1
-
-			bag:ClearAllPoints()
-			if index <= perRow then
-				bag:SetPoint("BOTTOMLEFT", anchorCache[index-1], "TOPLEFT", 0, 5)
+			container:ClearAllPoints()
+			if bagType == "Bag" then
+				if (index-1) % perRow == 0 then
+					container:SetPoint("BOTTOMRIGHT", anchorCache[index-perRow], "BOTTOMLEFT", -5, 0)
+				else
+					container:SetPoint("BOTTOMLEFT", anchorCache[index-1], "TOPLEFT", 0, 5)
+				end
+			elseif index <= perRow then
+				container:SetPoint("BOTTOMLEFT", anchorCache[index-1], "TOPLEFT", 0, 5)
 			elseif index == perRow+1 then
-				bag:SetPoint("TOPLEFT", anchorCache[index-1], "TOPRIGHT", 5, 0)
+				container:SetPoint("TOPLEFT", anchorCache[index-1], "TOPRIGHT", 5, 0)
 			elseif (index-1) % perRow == 0 then
-				bag:SetPoint("TOPLEFT", anchorCache[index-perRow], "TOPRIGHT", 5, 0)
+				container:SetPoint("TOPLEFT", anchorCache[index-perRow], "TOPRIGHT", 5, 0)
 			else
-				bag:SetPoint("TOPLEFT", anchorCache[index-1], "BOTTOMLEFT", 0, -5)
+				container:SetPoint("TOPLEFT", anchorCache[index-1], "BOTTOMLEFT", 0, -5)
 			end
-			anchorCache[index] = bag
+			anchorCache[index] = container
 		else
-			bag:Hide()
+			container:Hide()
 		end
 	end
+end
+
+local function GetCategoryScroll(bagType)
+	return categoryScroll[bagType]
+end
+
+-- 为分类 container 创建标题文字（仅分类名）
+function module:CreateCategoryHeader(container, label)
+	local title = B.CreateFS(container, 14, label, true, "TOPLEFT", 5, -8)
+
+	container.header = { title = title }
+	return container.header
+end
+
+-- 分类滚动容器：原生滚动条，4px 命中区 + 2px 细滑块
+function module:CreateCategoryScroll(parent, bagType)
+	local scroll = CreateFrame("ScrollFrame", nil, parent)
+	-- 工具栏固定在主容器顶部，只有下方的物品区域滚动。
+	scroll:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -38)
+	scroll:SetHeight(400)
+	B.SetBD(scroll)
+
+	local child = CreateFrame("Frame", nil, scroll)
+	child:SetPoint("TOPLEFT", scroll, "TOPLEFT", 0, 0)
+	scroll:SetScrollChild(child)
+	scroll:EnableMouseWheel(true)
+
+	local scrollBar = CreateFrame("EventFrame", nil, scroll, "MinimalScrollBar")
+	scrollBar:SetWidth(8)
+	scrollBar:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", -1, -2)
+	scrollBar:SetPoint("BOTTOMRIGHT", scroll, "BOTTOMRIGHT", -1, 2)
+	scrollBar:SetFrameLevel(scroll:GetFrameLevel() + 5)
+	scrollBar.minThumbExtent = 20
+	scrollBar.Back:Hide()
+	scrollBar.Forward:Hide()
+	scroll.ScrollBar = scrollBar
+
+	local track = scrollBar.Track
+	track:ClearAllPoints()
+	track:SetAllPoints(scrollBar)
+	track:DisableDrawLayer("ARTWORK")
+	local trackBg = track:CreateTexture(nil, "BACKGROUND")
+	trackBg:SetWidth(2)
+	trackBg:SetPoint("TOPRIGHT")
+	trackBg:SetPoint("BOTTOMRIGHT")
+	trackBg:SetColorTexture(DB.r, DB.g, DB.b, .1)
+
+	local thumb = scrollBar:GetThumb()
+	thumb:SetWidth(8)
+	thumb:SetHitRectInsets(0, 0, 0, 0)
+	thumb:DisableDrawLayer("ARTWORK")
+	local thumbTex = thumb:CreateTexture(nil, "OVERLAY")
+	thumbTex:SetWidth(2)
+	thumbTex:SetPoint("TOPRIGHT")
+	thumbTex:SetPoint("BOTTOMRIGHT")
+	thumbTex:SetColorTexture(DB.r, DB.g, DB.b, .4)
+	local highlight = thumb:CreateTexture(nil, "HIGHLIGHT")
+	highlight:SetAllPoints(thumbTex)
+	highlight:SetColorTexture(DB.r, DB.g, DB.b, .2)
+
+	-- 原生范围可能大于布局高度，只使用分类实际占用的高度。
+	scroll.GetVerticalScrollRange = function()
+		return math.max(0, child:GetHeight() - scroll:GetHeight())
+	end
+	ScrollUtil.InitScrollFrameWithScrollBar(scroll, scrollBar)
+	local onRangeChanged = scroll:GetScript("OnScrollRangeChanged")
+	scroll:SetScript("OnScrollRangeChanged", function(self, horizontalRange)
+		onRangeChanged(self, horizontalRange, self:GetVerticalScrollRange())
+	end)
+	scroll:SetPanExtent(40)
+	scrollBar:SetScript("OnMouseWheel", scroll:GetScript("OnMouseWheel"))
+	scrollBar:SetHideIfUnscrollable(true)
+
+	categoryScroll[bagType] = { scroll = scroll, child = child }
+	return scroll, child
+end
+
+-- 竖直堆叠分类 section，并更新滚动范围
+local function UpdateCategoryLayout(parent, bags, bagType)
+	local scrollInfo = categoryScroll[bagType]
+	if not scrollInfo then return end
+	local child = scrollInfo.child
+	local scroll = scrollInfo.scroll
+
+	local columns = module:GetContainerColumns(bagType)
+	local iconWidth = C.db["Bags"]["IconSize"]
+	local spacing = 3
+	local scrollWidth = columns * (iconWidth + spacing) - spacing + 10
+
+	child:SetWidth(scrollWidth)
+	scroll:SetWidth(scrollWidth)
+
+	local yOffset = 0
+
+	for i = #bags, 1, -1 do
+		local container = bags[i]
+		if HasContainerItems(container) and CheckForBagReagent(container.name) then
+			container:Show()
+			container:ClearAllPoints()
+			container:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -yOffset)
+
+			yOffset = yOffset + container:GetHeight()
+		else
+			container:Hide()
+		end
+	end
+
+	local maxHeight = C.db["Bags"]["ScrollHeight"] or 400
+	maxHeight = math.min(maxHeight, UIParent:GetHeight() - 48)
+	yOffset = math.max(1, yOffset)
+	child:SetHeight(yOffset)
+	scroll:SetHeight(math.min(maxHeight, yOffset))
+	parent:SetSize(scrollWidth, scroll:GetHeight() + 38)
 end
 
 local function highlightFunction(button, match)
@@ -122,7 +214,7 @@ local BagSmartFilter = {
 		elseif text == "aoe" then
 			return item.bindOn == "accountequip"
 		else
-			return IsItemMatched(item.subType, text) or IsItemMatched(item.equipLoc, text) or IsItemMatched(item.name, text)
+			return IsItemMatched(item.subType, text) or IsItemMatched(item.equipLoc, text) or IsItemMatched(item.name, text) or IsItemMatched((item.expacID or 0) + 1, text)
 		end
 	end,
 	_default = "default",
@@ -153,7 +245,7 @@ function module:CreateInfoFrame()
 	search.textFilters = BagSmartFilter
 
 	infoFrame.title = SEARCH
-	B.AddTooltip(infoFrame, "ANCHOR_TOPLEFT", DB.InfoColor..L["BagSearchTip"])
+	B.AddTooltip(infoFrame, "ANCHOR_BOTTOMLEFT", DB.InfoColor..L["BagSearchTip"])
 end
 
 local function ToggleWidgetButtons(self)
@@ -211,7 +303,7 @@ end
 
 function module:CreateBagBar(settings, columns)
 	local bagBar = self:SpawnPlugin("BagBar", settings.Bags)
-	bagBar:SetPoint("TOPRIGHT", self, "BOTTOMRIGHT", 0, -5)
+	bagBar:SetPoint("BOTTOMRIGHT", self, "TOPRIGHT", 0, 5)
 	B.SetBD(bagBar)
 	bagBar.highlightFunction = highlightFunction
 	bagBar.isGlobal = true
@@ -223,15 +315,28 @@ function module:CreateBagBar(settings, columns)
 	self.BagBar = bagBar
 end
 
-function module:CreateBagTab(settings, columns)
+function module:CreateBagTab(settings, columns, account)
 	local bagTab = self:SpawnPlugin("BagTab", settings.Bags)
 	bagTab:SetPoint("TOPRIGHT", self, "BOTTOMRIGHT", 0, -5)
 	B.SetBD(bagTab)
 	bagTab.highlightFunction = highlightFunction
+	bagTab.isGlobal = true
 	bagTab:Hide()
 	bagTab.columns = columns
 	bagTab.UpdateAnchor = updateBagBar
 	bagTab:UpdateAnchor()
+
+	local purchaseButton = CreateFrame("Button", "NDui_"..account.."PurchaseButton", bagTab, "InsecureActionButtonTemplate")
+	purchaseButton:SetSize(120, 22)
+	purchaseButton:SetPoint("TOP", bagTab, "BOTTOM", 0, -5)
+	B.CreateFS(purchaseButton, 14, PURCHASE, "info")
+	B.Reskin(purchaseButton)
+	purchaseButton:Hide()
+
+	purchaseButton:RegisterForClicks("AnyUp", "AnyDown")
+	purchaseButton:SetAttribute("type", "click")
+	purchaseButton:SetAttribute("clickbutton", module:GetPurchaseButton())
+	bagTab.purchaseButton = purchaseButton
 
 	self.BagBar = bagTab
 end
@@ -240,28 +345,24 @@ local function CloseOrRestoreBags(self, btn)
 	if btn == "RightButton" then
 		local bag = self.__owner.main
 		local bank = self.__owner.bank
-		local reagent = self.__owner.reagent
 		local account = self.__owner.accountbank
 		C.db["TempAnchor"][bag:GetName()] = nil
 		C.db["TempAnchor"][bank:GetName()] = nil
-		C.db["TempAnchor"][reagent:GetName()] = nil
 		C.db["TempAnchor"][account:GetName()] = nil
 		bag:ClearAllPoints()
 		bag:SetPoint(unpack(bag.__anchor))
 		bank:ClearAllPoints()
 		bank:SetPoint(unpack(bank.__anchor))
-		reagent:ClearAllPoints()
-		reagent:SetPoint(unpack(bank.__anchor))
 		account:ClearAllPoints()
 		account:SetPoint(unpack(bank.__anchor))
 		PlaySound(SOUNDKIT.IG_MINIMAP_OPEN)
 	else
-		CloseAllBags()
+		module:CloseBags()
 	end
 end
 
 function module:CreateCloseButton(f)
-	local bu = B.CreateButton(self, 22, 22, true, "Interface\\RAIDFRAME\\ReadyCheck-NotReady")
+	local bu = B.CreateButton(self, 22, 22, true, "Atlas:common-icon-redx")
 	bu:RegisterForClicks("AnyUp")
 	bu.__owner = f
 	bu:SetScript("OnClick", CloseOrRestoreBags)
@@ -271,40 +372,17 @@ function module:CreateCloseButton(f)
 	return bu
 end
 
-function module:CreateReagentButton(f)
-	local bu = B.CreateButton(self, 22, 22, true, "Atlas:Reagents")
-	bu.Icon:SetPoint("BOTTOMRIGHT", -C.mult, -C.mult)
+function module:CreateAccountBankButton()
+	local bu = B.CreateButton(self, 22, 22, true, "Interface\\Icons\\Factionchange")
 	bu:RegisterForClicks("AnyUp")
-	bu:SetScript("OnClick", function(_, btn)
-		if not C_Bank.CanViewBank(CHAR_BANK_TYPE) then return end
-
-		if not IsReagentBankUnlocked() then
-			StaticPopup_Show("CONFIRM_BUY_REAGENTBANK_TAB")
-		else
-			PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB)
-			BankFrame_ShowPanel("ReagentBankFrame") -- trigger context matching
-			if btn == "RightButton" then DepositReagentBank() end
-		end
-	end)
-	bu.title = REAGENT_BANK
-	B.AddTooltip(bu, "ANCHOR_TOP")
-
-	return bu
-end
-
-function module:CreateAccountBankButton(f)
-	local bu = B.CreateButton(self, 22, 22, true, 235423)
-	bu.Icon:SetTexCoord(.6, .9, .1, .4)
-	bu.Icon:SetPoint("BOTTOMRIGHT", -C.mult, -C.mult)
-	bu:RegisterForClicks("AnyUp")
-	bu:SetScript("OnClick", function(_, btn)
+	bu:SetScript("OnClick", function()
 		if not C_Bank.CanViewBank(ACCOUNT_BANK_TYPE) then return end
 
-		if AccountBankPanel:ShouldShowLockPrompt() then
+		if BankFrame.BankPanel:ShouldShowLockPrompt() then
 			UIErrorsFrame:AddMessage(DB.InfoColor..ACCOUNT_BANK_LOCKED_PROMPT)
 		else
 			PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB)
-			BankFrame_ShowPanel("AccountBankPanel") -- trigger context matching
+			BankFrame.BankPanel:SetBankType(ACCOUNT_BANK_TYPE)
 		end
 	end)
 	bu.title = ACCOUNT_BANK_PANEL_TITLE
@@ -347,49 +425,16 @@ function module:CreateAccountMoney()
 	return frame
 end
 
-function module:CreateBankButton(f)
+function module:CreateBankButton()
 	local bu = B.CreateButton(self, 22, 22, true, "Atlas:Banker")
 	bu:SetScript("OnClick", function()
 		if not C_Bank.CanViewBank(CHAR_BANK_TYPE) then return end
 
 		PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB)
-		BankFrame_ShowPanel("BankSlotsFrame") -- trigger context matching
+		BankFrame.BankPanel:SetBankType(CHAR_BANK_TYPE)
 	end)
 	bu.title = BANK
 	B.AddTooltip(bu, "ANCHOR_TOP")
-
-	return bu
-end
-
-local function updateDepositButtonStatus(bu)
-	if C.db["Bags"]["AutoDeposit"] then
-		bu.bg:SetBackdropBorderColor(1, .8, 0)
-	else
-		B.SetBorderColor(bu.bg)
-	end
-end
-
-function module:AutoDeposit()
-	if C.db["Bags"]["AutoDeposit"] and not IsShiftKeyDown() then
-		DepositReagentBank()
-	end
-end
-
-function module:CreateDepositButton()
-	local bu = B.CreateButton(self, 22, 22, true, "Atlas:GreenCross")
-	bu.Icon:SetOutside()
-	bu:RegisterForClicks("AnyUp")
-	bu:SetScript("OnClick", function(_, btn)
-		if btn == "RightButton" then
-			C.db["Bags"]["AutoDeposit"] = not C.db["Bags"]["AutoDeposit"]
-			updateDepositButtonStatus(bu)
-		else
-			DepositReagentBank()
-		end
-	end)
-	bu.title = REAGENTBANK_DEPOSIT
-	B.AddTooltip(bu, "ANCHOR_TOP", DB.InfoColor..L["AutoDepositTip"])
-	updateDepositButtonStatus(bu)
 
 	return bu
 end
@@ -411,19 +456,38 @@ function module:CreateAccountBankDeposit()
 			local isOn = GetCVarBool("bankAutoDepositReagents")
 			SetCVar("bankAutoDepositReagents", isOn and 0 or 1)
 			updateAccountBankDeposit(bu)
-		else
+		end
+	end)
+	bu:SetScript("OnDoubleClick", function(_, btn)
+		if btn == "LeftButton" then
 			C_Bank.AutoDepositItemsIntoBank(ACCOUNT_BANK_TYPE)
 		end
 	end)
 	bu.title = ACCOUNT_BANK_DEPOSIT_BUTTON_LABEL
-	B.AddTooltip(bu, "ANCHOR_TOP", DB.InfoColor..L["DepositTradeGoodsTip"])
+	B.AddTooltip(bu, "ANCHOR_TOP", DB.InfoColor..L["AccountDepositTip"])
 	updateAccountBankDeposit(bu)
+
+	return bu
+end
+
+function module:CreateBankDeposit()
+	local bu = B.CreateButton(self, 22, 22, true, "Atlas:GreenCross")
+	bu.Icon:SetOutside()
+	bu:RegisterForClicks("AnyUp")
+	bu:SetScript("OnDoubleClick", function(_, btn)
+		if btn == "LeftButton" then
+			C_Bank.AutoDepositItemsIntoBank(CHAR_BANK_TYPE)
+		end
+	end)
+	bu.title = CHARACTER_BANK_DEPOSIT_BUTTON_LABEL
+	B.AddTooltip(bu, "ANCHOR_TOP", DB.InfoColor..L["BankDepositTip"])
 
 	return bu
 end
 
 local function ToggleBackpacks(self)
 	local parent = self.__owner
+	if not parent.BagBar then return end
 	B:TogglePanel(parent.BagBar)
 	if parent.BagBar:IsShown() then
 		self.bg:SetBackdropBorderColor(1, .8, 0)
@@ -435,7 +499,7 @@ local function ToggleBackpacks(self)
 end
 
 function module:CreateBagToggle(click)
-	local bu = B.CreateButton(self, 22, 22, true, "Interface\\Buttons\\Button-Backpack-Up")
+	local bu = B.CreateButton(self, 22, 22, true, "Interface\\Icons\\inv_misc_bag_08")
 	bu.__owner = self
 	bu:SetScript("OnClick", ToggleBackpacks)
 	bu.title = BACKPACK_TOOLTIP
@@ -457,8 +521,6 @@ function module:CreateSortButton(name)
 
 		if name == "Bank" then
 			SortBankBags()
-		elseif name == "Reagent" then
-			SortReagentBankBags()
 		elseif name == "Account" then
 			C_Container.SortAccountBankBags()
 		else
@@ -491,6 +553,8 @@ function module:GetContainerEmptySlot(bagID)
 end
 
 function module:GetEmptySlot(name)
+	name = strmatch(name, "^(.-)Other$") or name
+
 	if name == "Bag" then
 		for bagID = 0, 4 do
 			local slotID = module:GetContainerEmptySlot(bagID)
@@ -499,20 +563,11 @@ function module:GetEmptySlot(name)
 			end
 		end
 	elseif name == "Bank" then
-		local slotID = module:GetContainerEmptySlot(-1)
-		if slotID then
-			return -1, slotID
-		end
-		for bagID = 6, 12 do
+		for _, bagID in ipairs(cargBags.BagStrings.bank) do
 			local slotID = module:GetContainerEmptySlot(bagID)
 			if slotID then
 				return bagID, slotID
 			end
-		end
-	elseif name == "Reagent" then
-		local slotID = module:GetContainerEmptySlot(-3)
-		if slotID then
-			return -3, slotID
 		end
 	elseif name == "BagReagent" then
 		local slotID = module:GetContainerEmptySlot(5)
@@ -520,7 +575,7 @@ function module:GetEmptySlot(name)
 			return 5, slotID
 		end
 	elseif name == "Account" then
-		for bagID = 13, 17 do
+		for _, bagID in ipairs(cargBags.BagStrings.accountbank) do
 			local slotID = module:GetContainerEmptySlot(bagID)
 			if slotID then
 				return bagID, slotID
@@ -539,14 +594,17 @@ end
 local freeSlotContainer = {
 	["Bag"] = true,
 	["Bank"] = true,
-	["Reagent"] = true,
-	["BagReagent"] = true,
 	["Account"] = true,
+	["BagOther"] = true,
+	["BankOther"] = true,
+	["BagReagent"] = true,
+	["AccountOther"] = true,
 }
 
 function module:CreateFreeSlots()
 	local name = self.name
 	if not freeSlotContainer[name] then return end
+	if compactLayout and self.Settings.Bags then return end
 
 	local slot = CreateFrame("Button", name.."FreeSlot", self, "BackdropTemplate")
 	slot:SetSize(self.iconSize, self.iconSize)
@@ -590,7 +648,7 @@ function module:CreateSplitButton()
 
 	local splitFrame = CreateFrame("Frame", nil, self)
 	splitFrame:SetSize(100, 50)
-	splitFrame:SetPoint("TOPLEFT", self, "BOTTOMLEFT", 0, -5)
+	splitFrame:SetPoint("TOPRIGHT", self, "TOPLEFT", -5, 0)
 	B.CreateFS(splitFrame, 14, L["SplitCount"], "system", "TOP", 1, -5)
 	B.SetBD(splitFrame)
 	splitFrame:Hide()
@@ -599,9 +657,7 @@ function module:CreateSplitButton()
 	editbox:SetJustifyH("CENTER")
 	editbox:SetScript("OnTextChanged", saveSplitCount)
 
-	local bu = B.CreateButton(self, 22, 22, true, "Interface\\HELPFRAME\\ReportLagIcon-AuctionHouse")
-	bu.Icon:SetPoint("TOPLEFT", -1, 3)
-	bu.Icon:SetPoint("BOTTOMRIGHT", 1, -3)
+	local bu = B.CreateButton(self, 22, 22, true, "Interface\\Icons\\Ability_Monk_CounteractMagic")
 	bu.__turnOff = function()
 		B.SetBorderColor(bu.bg)
 		bu.text = nil
@@ -662,12 +718,14 @@ StaticPopupDialogs["NDUI_RENAMECUSTOMGROUP"] = {
 	button2 = CANCEL,
 	OnAccept = function(self)
 		local index = module.selectGroupIndex
-		local text = self.editBox:GetText()
+		local text = self.EditBox:GetText()
 		C.db["Bags"]["CustomNames"][index] = text ~= "" and text or nil
 
-		module.CustomMenu[index+2].text = GetCustomGroupTitle(index)
-		module.ContainerGroups["Bag"][index].label:SetText(GetCustomGroupTitle(index))
-		module.ContainerGroups["Bank"][index].label:SetText(GetCustomGroupTitle(index))
+		local title = GetCustomGroupTitle(index)
+		module.CustomMenu[index+2].text = title
+		for _, bagType in ipairs({"Bag", "Bank", "Account"}) do
+			module.Bags:GetContainer(bagType.."Custom"..index).header.title:SetText(title)
+		end
 	end,
 	EditBoxOnEscapePressed = function(self)
 		self:GetParent():Hide()
@@ -716,9 +774,7 @@ function module:CreateFavouriteButton()
 
 	local enabledText = DB.InfoColor..L["FavouriteMode Enabled"]
 
-	local bu = B.CreateButton(self, 22, 22, true, "Interface\\Common\\friendship-heart")
-	bu.Icon:SetPoint("TOPLEFT", -5, 2.5)
-	bu.Icon:SetPoint("BOTTOMRIGHT", 5, -1.5)
+	local bu = B.CreateButton(self, 22, 22, true, "Interface\\Icons\\PetBattle_Health")
 	bu.__turnOff = function()
 		B.SetBorderColor(bu.bg)
 		bu.text = nil
@@ -892,11 +948,22 @@ function module:OpenBags()
 end
 
 function module:CloseBags()
-	CloseAllBags()
+	if self.Bags and self.Bags:IsShown() then
+		ToggleAllBags()
+	end
+end
+
+function module:GetPurchaseButton()
+	local panel = _G.BankPanel
+	if panel and panel.PurchaseButton then return panel.PurchaseButton end
+	local prompt = panel and panel.PurchasePrompt
+	local cost = prompt and prompt.TabCostFrame
+	return cost and cost.PurchaseButton
 end
 
 function module:OnLogin()
 	if not C.db["Bags"]["Enable"] then return end
+	compactLayout = C.db["Bags"]["LayoutMode"] == true
 
 	-- Settings
 	local iconSize = C.db["Bags"]["IconSize"]
@@ -913,11 +980,6 @@ function module:OnLogin()
 	module.Bags = Backpack
 	module.BagsType = {}
 	module.BagsType[0] = 0	-- backpack
-	module.BagsType[-1] = 0	-- bank
-	module.BagsType[-3] = 0	-- reagent
-	for bagID = 13, 17 do
-		module.BagsType[bagID] = 0	-- accountbank
-	end
 
 	local f = {}
 	local filters = module:GetFilters()
@@ -925,6 +987,7 @@ function module:OnLogin()
 	module.ContainerGroups = {["Bag"] = {}, ["Bank"] = {}, ["Account"] = {}}
 
 	local function AddNewContainer(bagType, index, name, filter)
+		if not compactLayout then index = index - 1 end
 		local newContainer = MyContainer:New(name, {BagType = bagType, Index = index})
 		newContainer:SetFilter(filter, true)
 		module.ContainerGroups[bagType][index] = newContainer
@@ -932,71 +995,81 @@ function module:OnLogin()
 
 	function Backpack:OnInit()
 		for i = 1, 5 do
-			AddNewContainer("Bag", i, "BagCustom"..i, filters["bagCustom"..i])
+			AddNewContainer("Bag", i+1, "BagCustom"..i, filters["bagCustom"..i])
 		end
-		AddNewContainer("Bag", 6, "BagReagent", filters.onlyBagReagent)
-		AddNewContainer("Bag", 18, "Junk", filters.bagsJunk)
-		AddNewContainer("Bag", 9, "EquipSet", filters.bagEquipSet)
-		AddNewContainer("Bag", 10, "BagAOE", filters.bagAOE)
-		AddNewContainer("Bag", 7, "AzeriteItem", filters.bagAzeriteItem)
-		AddNewContainer("Bag", 17, "BagLower", filters.bagLower)
-		AddNewContainer("Bag", 8, "Equipment", filters.bagEquipment)
-		AddNewContainer("Bag", 11, "BagCollection", filters.bagCollection)
-		AddNewContainer("Bag", 14, "BagStone", filters.bagStone)
-		AddNewContainer("Bag", 15, "Consumable", filters.bagConsumable)
-		AddNewContainer("Bag", 12, "BagGoods", filters.bagGoods)
-		AddNewContainer("Bag", 16, "BagQuest", filters.bagQuest)
-		AddNewContainer("Bag", 13, "BagAnima", filters.bagAnima)
+		AddNewContainer("Bag", 7, "BagReagent", filters.onlyBagReagent)
+		AddNewContainer("Bag", 21, "Junk", filters.bagsJunk)
+		AddNewContainer("Bag", 10, "EquipSet", filters.bagEquipSet)
+		AddNewContainer("Bag", 11, "BagAOE", filters.bagAOE)
+		AddNewContainer("Bag", 8, "AzeriteItem", filters.bagAzeriteItem)
+		AddNewContainer("Bag", 19, "BagLegacy", filters.bagLegacy)
+		AddNewContainer("Bag", 20, "BagLower", filters.bagLower)
+		AddNewContainer("Bag", 9, "Equipment", filters.bagEquipment)
+		AddNewContainer("Bag", 12, "BagCollection", filters.bagCollection)
+		AddNewContainer("Bag", 16, "BagStone", filters.bagStone)
+		AddNewContainer("Bag", 17, "Consumable", filters.bagConsumable)
+		AddNewContainer("Bag", 14, "BagGoods", filters.bagGoods)
+		AddNewContainer("Bag", 18, "BagQuest", filters.bagQuest)
+		AddNewContainer("Bag", 15, "BagAnima", filters.bagAnima)
+		AddNewContainer("Bag", 13, "BagDecor", filters.bagDecor)
+		if compactLayout then AddNewContainer("Bag", 1, "BagOther", filters.onlyBags) end
 
 		f.main = MyContainer:New("Bag", {Bags = "bags", BagType = "Bag"})
-		f.main.__anchor = {"BOTTOMRIGHT", -50, 100}
+		f.main.__anchor = {"BOTTOMRIGHT", -50, 50}
 		f.main:SetPoint(unpack(f.main.__anchor))
-		f.main:SetFilter(filters.onlyBags, true)
+		f.main:SetFilter(compactLayout and function() end or filters.onlyBags, true)
 
 		for i = 1, 5 do
-			AddNewContainer("Bank", i, "BankCustom"..i, filters["bankCustom"..i])
+			AddNewContainer("Bank", i+1, "BankCustom"..i, filters["bankCustom"..i])
 		end
-		AddNewContainer("Bank", 8, "BankEquipSet", filters.bankEquipSet)
-		AddNewContainer("Bank", 9, "BankAOE", filters.bankAOE)
-		AddNewContainer("Bank", 6, "BankAzeriteItem", filters.bankAzeriteItem)
-		AddNewContainer("Bank", 10, "BankLegendary", filters.bankLegendary)
-		AddNewContainer("Bank", 16, "BankLower", filters.bankLower)
-		AddNewContainer("Bank", 7, "BankEquipment", filters.bankEquipment)
-		AddNewContainer("Bank", 11, "BankCollection", filters.bankCollection)
-		AddNewContainer("Bank", 14, "BankConsumable", filters.bankConsumable)
-		AddNewContainer("Bank", 12, "BankGoods", filters.bankGoods)
-		AddNewContainer("Bank", 15, "BankQuest", filters.bankQuest)
-		AddNewContainer("Bank", 13, "BankAnima", filters.bankAnima)
+		AddNewContainer("Bank", 9, "BankEquipSet", filters.bankEquipSet)
+		AddNewContainer("Bank", 10, "BankAOE", filters.bankAOE)
+		AddNewContainer("Bank", 7, "BankAzeriteItem", filters.bankAzeriteItem)
+		AddNewContainer("Bank", 11, "BankLegendary", filters.bankLegendary)
+		AddNewContainer("Bank", 18, "BankLegacy", filters.bankLegacy)
+		AddNewContainer("Bank", 19, "BankLower", filters.bankLower)
+		AddNewContainer("Bank", 8, "BankEquipment", filters.bankEquipment)
+		AddNewContainer("Bank", 12, "BankCollection", filters.bankCollection)
+		AddNewContainer("Bank", 16, "BankConsumable", filters.bankConsumable)
+		AddNewContainer("Bank", 14, "BankGoods", filters.bankGoods)
+		AddNewContainer("Bank", 17, "BankQuest", filters.bankQuest)
+		AddNewContainer("Bank", 15, "BankAnima", filters.bankAnima)
+		AddNewContainer("Bank", 13, "BankDecor", filters.bankDecor)
+		if compactLayout then AddNewContainer("Bank", 1, "BankOther", filters.onlyBank) end
 
 		f.bank = MyContainer:New("Bank", {Bags = "bank", BagType = "Bank"})
-		f.bank.__anchor = {"BOTTOMLEFT", 25, 50}
+		f.bank.__anchor = {"BOTTOMLEFT", 50, 50}
 		f.bank:SetPoint(unpack(f.bank.__anchor))
-		f.bank:SetFilter(filters.onlyBank, true)
+		f.bank:SetFilter(compactLayout and function() end or filters.onlyBank, true)
 		f.bank:Hide()
 
-		f.reagent = MyContainer:New("Reagent", {Bags = "bankreagent", BagType = "Bank"})
-		f.reagent:SetFilter(filters.onlyReagent, true)
-		f.reagent:SetPoint(unpack(f.bank.__anchor))
-		f.reagent:Hide()
-
 		for i = 1, 5 do
-			AddNewContainer("Account", i, "AccountCustom"..i, filters["accountCustom"..i])
+			AddNewContainer("Account", i+1, "AccountCustom"..i, filters["accountCustom"..i])
 		end
-		AddNewContainer("Account", 7, "AccountAOE", filters.accountAOE)
-		AddNewContainer("Account", 6, "AccountEquipment", filters.accountEquipment)
-		AddNewContainer("Account", 9, "AccountConsumable", filters.accountConsumable)
-		AddNewContainer("Account", 8, "AccountGoods", filters.accountGoods)
+		AddNewContainer("Account", 9, "AccountAOE", filters.accountAOE)
+		AddNewContainer("Account", 8, "AccountLegacy", filters.accountLegacy)
+		AddNewContainer("Account", 7, "AccountEquipment", filters.accountEquipment)
+		AddNewContainer("Account", 11, "AccountConsumable", filters.accountConsumable)
+		AddNewContainer("Account", 10, "AccountGoods", filters.accountGoods)
+		if compactLayout then AddNewContainer("Account", 1, "AccountOther", filters.accountbank) end
 
 		f.accountbank = MyContainer:New("Account", {Bags = "accountbank", BagType = "Account"})
-		f.accountbank:SetFilter(filters.accountbank, true)
+		f.accountbank:SetFilter(compactLayout and function() end or filters.accountbank, true)
 		f.accountbank:SetPoint(unpack(f.bank.__anchor))
 		f.accountbank:Hide()
 
+		if compactLayout then
+			for _, bagType in ipairs({"Bag", "Bank", "Account"}) do
+				module:CreateCategoryScroll(Backpack.contByName[bagType], bagType)
+			end
+		end
+
 		for bagType, groups in pairs(module.ContainerGroups) do
 			for _, container in ipairs(groups) do
+				local scrollInfo = GetCategoryScroll(bagType)
 				local parent = Backpack.contByName[bagType]
-				container:SetParent(parent)
-				B.CreateMF(container, parent, true)
+				container:SetParent(scrollInfo and scrollInfo.child or parent)
+				if not compactLayout then B.CreateMF(container, parent, true) end
 			end
 		end
 	end
@@ -1004,25 +1077,28 @@ function module:OnLogin()
 	local initBagType
 	function Backpack:OnBankOpened()
 		BankFrame:Show()
-		self:GetContainer("Bank"):Show()
+		BankFrame.BankPanel:Show()
 
 		if not initBagType then
-			module:UpdateAllBags() -- Initialize bagType
 			module:UpdateBagSize()
 			initBagType = true
 		end
 	end
 
 	function Backpack:OnBankClosed()
-		BankFrame.selectedTab = 1
-		BankFrame.activeTabIndex = 1
+		BankFrame.BankPanel:Hide()
 		self:GetContainer("Bank"):Hide()
-		self:GetContainer("Reagent"):Hide()
 		self:GetContainer("Account"):Hide()
+
+		local purchaseButton = module:GetPurchaseButton()
+		if purchaseButton then
+			purchaseButton:SetAttribute("overrideBankType", nil)
+		end
 	end
 
 	local MyButton = Backpack:GetItemButtonClass()
 	MyButton:Scaffold("Default")
+	module:SetupItemContext(MyButton)
 
 	function MyButton:OnCreate()
 		self:SetNormalTexture(0)
@@ -1071,6 +1147,8 @@ function module:OnLogin()
 			self.ProfessionQualityOverlay = self:CreateTexture(nil, "OVERLAY")
 			self.ProfessionQualityOverlay:SetPoint("TOPLEFT", -3, 2)
 		end
+
+		module:SetupItemContextButton(self)
 	end
 
 	function MyButton:ItemOnEnter()
@@ -1225,10 +1303,43 @@ function module:OnLogin()
 		end
 	end
 
+	local function UpdateContainerLayout(bagType)
+		local parent = Backpack.contByName[bagType]
+		if not parent then return end
+		local groups = module.ContainerGroups[bagType]
+		if compactLayout then
+			UpdateCategoryLayout(parent, groups, bagType)
+		else
+			UpdateClassicLayout(parent, groups, bagType)
+		end
+	end
+
+	local pendingLayouts, layoutScheduled = {}, false
+	function module:ScheduleLayout(bagType)
+		pendingLayouts[bagType] = true
+		if layoutScheduled then return end
+		layoutScheduled = true
+		C_Timer_After(0, function()
+			layoutScheduled = false
+			for pendingType in pairs(pendingLayouts) do
+				pendingLayouts[pendingType] = nil
+				UpdateContainerLayout(pendingType)
+			end
+		end)
+	end
+
 	function module:UpdateAllAnchors()
-		module:UpdateBagsAnchor(f.main, module.ContainerGroups["Bag"])
-		module:UpdateBankAnchor(f.bank, module.ContainerGroups["Bank"])
-		module:UpdateBankAnchor(f.accountbank, module.ContainerGroups["Account"])
+		for _, bagType in ipairs({"Bag", "Bank", "Account"}) do
+			pendingLayouts[bagType] = nil
+			UpdateContainerLayout(bagType)
+		end
+	end
+
+	function module:UpdateScrollHeight()
+		if not compactLayout then return end
+		for _, bagType in ipairs({"Bag", "Bank", "Account"}) do
+			module:ScheduleLayout(bagType)
+		end
 	end
 
 	function module:GetContainerColumns(bagType)
@@ -1242,6 +1353,10 @@ function module:OnLogin()
 	end
 
 	function MyContainer:OnContentsChanged(gridOnly)
+		if compactLayout and self.Settings.Bags then
+			if not gridOnly then module:ScheduleLayout(self.Settings.BagType) end
+			return
+		end
 		self:SortButtons("bagSlot")
 
 		local columns = module:GetContainerColumns(self.Settings.BagType)
@@ -1251,6 +1366,7 @@ function module:OnLogin()
 		local yOffset = -offset + xOffset
 		local _, height = self:LayoutButtons("grid", columns, spacing, xOffset, yOffset)
 		local width = columns * (iconSize+spacing)-spacing
+
 		if self.freeSlot then
 			if C.db["Bags"]["GatherEmpty"] then
 				local numSlots = #self.buttons + 1
@@ -1276,15 +1392,22 @@ function module:OnLogin()
 		self:SetSize(width + xOffset*2, height + offset)
 
 		if not gridOnly then
-			module:UpdateAllAnchors()
+			module:ScheduleLayout(self.Settings.BagType)
 		end
 	end
 
 	function MyContainer:OnCreate(name, settings)
 		self.Settings = settings
 		self:SetFrameStrata("HIGH")
-		self:SetClampedToScreen(true)
-		B.SetBD(self)
+		-- 滚动子容器不能独立限制屏幕位置，否则会抵消滚动偏移。
+		self:SetClampedToScreen(not compactLayout or settings.Bags ~= nil)
+		if not compactLayout or settings.Bags then
+			local bg = B.SetBD(self)
+			if compactLayout then
+				-- 主容器保留整体边界，背景只覆盖顶部工具栏。
+				bg:SetPoint("BOTTOMRIGHT", self, "TOPRIGHT", C.mult, -33-C.mult)
+			end
+		end
 		if settings.Bags then
 			B.CreateMF(self, nil, true)
 		end
@@ -1314,18 +1437,24 @@ function module:OnLogin()
 		elseif strmatch(name, "Anima") then
 			label = POWER_TYPE_ANIMA
 		elseif strmatch(name, "Custom%d") then
-			label = GetCustomGroupTitle(settings.Index)
+			label = GetCustomGroupTitle(tonumber(strmatch(name, "Custom(%d+)$")))
 		elseif name == "BagReagent" then
 			label = L["ReagentBag"]
+		elseif strmatch(name, "Other$") then
+			label = OTHER
 		elseif name == "BagStone" then
 			label = C_Spell.GetSpellName(404861)
 		elseif strmatch(name, "AOE") then
 			label = ITEM_ACCOUNTBOUND_UNTIL_EQUIP
 		elseif strmatch(name, "Lower") then
 			label = L["LowerItem"]
+		elseif strmatch(name, "Legacy") then
+			label = L["LegacyItem"]
+		elseif strmatch(name, "Decor") then
+			label = AUCTION_CATEGORY_HOUSING
 		end
 		if label then
-			self.label = B.CreateFS(self, 14, label, true, "TOPLEFT", 5, -8)
+			module:CreateCategoryHeader(self, label)
 			return
 		end
 
@@ -1342,21 +1471,16 @@ function module:OnLogin()
 			buttons[6] = module.CreateJunkButton(self)
 			buttons[7] = module.CreateDeleteButton(self)
 		elseif name == "Bank" then
-			module.CreateBagBar(self, settings, 7)
+			module.CreateBagTab(self, settings, 6, "Bank")
 			buttons[3] = module.CreateBagToggle(self)
-			buttons[4] = module.CreateReagentButton(self, f)
-			buttons[5] = module.CreateAccountBankButton(self, f)
-		elseif name == "Reagent" then
-			buttons[3] = module.CreateDepositButton(self)
-			buttons[4] = module.CreateBankButton(self, f)
-			buttons[5] = module.CreateAccountBankButton(self, f)
+			buttons[4] = module.CreateBankDeposit(self)
+			buttons[5] = module.CreateAccountBankButton(self)
 		elseif name == "Account" then
-			module.CreateBagTab(self, settings, 5)
-			buttons[3] = module.CreateBagToggle(self, true)
+			module.CreateBagTab(self, settings, 5, "Account")
+			buttons[3] = module.CreateBagToggle(self)
 			buttons[4] = module.CreateAccountBankDeposit(self)
-			buttons[5] = module.CreateBankButton(self, f)
-			buttons[6] = module.CreateReagentButton(self, f)
-			buttons[7] = module.CreateAccountMoney(self)
+			buttons[5] = module.CreateBankButton(self)
+			buttons[6] = module.CreateAccountMoney(self)
 		end
 
 		for i = 1, #buttons do
@@ -1400,6 +1524,8 @@ function module:OnLogin()
 			end
 			container:OnContentsChanged(true)
 		end
+
+		module:UpdateAllAnchors()
 	end
 
 	local BagButton = Backpack:GetClass("BagButton", true, "BagButton")
@@ -1448,7 +1574,6 @@ function module:OnLogin()
 
 	B:RegisterEvent("TRADE_SHOW", module.OpenBags)
 	B:RegisterEvent("TRADE_CLOSED", module.CloseBags)
-	B:RegisterEvent("BANKFRAME_OPENED", module.AutoDeposit)
 
 	-- Update infobar slots
 	local INFO = B:GetModule("Infobar")
@@ -1465,9 +1590,6 @@ function module:OnLogin()
 	end
 
 	-- Fixes
-	BankFrame.GetRight = function() return f.bank:GetRight() end
-	BankFrameItemButton_Update = B.Dummy
-
 	local passedSystems = {
 		["TutorialReagentBag"] = true,
 	}
@@ -1482,20 +1604,22 @@ function module:OnLogin()
 	SetCVar("professionAccessorySlotsExampleShown", 1)
 
 	-- Bank frame paging
-	local bankNameIndex = {
-		["BankSlotsFrame"] = 1,
-		["ReagentBankFrame"] = 2,
-		["AccountBankPanel"] = 3,
-	}
-	hooksecurefunc("BankFrame_ShowPanel", function(sidePanelName)
-		local panelIndex = bankNameIndex[sidePanelName]
-		if panelIndex then
-			BankFrame.selectedTab = panelIndex
-			BankFrame.activeTabIndex = panelIndex
-			f.bank:SetShown(panelIndex == 1)
-			f.reagent:SetShown(panelIndex == 2)
-			f.accountbank:SetShown(panelIndex == 3)
+	hooksecurefunc(BankFrame.BankPanel, "SetBankType", function(self, bankType)
+		local bank = module.Bags:GetContainer("Bank")
+		if bank then
+			bank:SetShown(bankType == CHAR_BANK_TYPE)
+			bank.BagBar.purchaseButton:SetShown(C_Bank.CanPurchaseBankTab(bankType))
 		end
+		local account = module.Bags:GetContainer("Account")
+		if account then
+			account:SetShown(bankType == ACCOUNT_BANK_TYPE)
+			account.BagBar.purchaseButton:SetShown(C_Bank.CanPurchaseBankTab(bankType))
+		end
+		local purchaseButton = module:GetPurchaseButton()
+		if purchaseButton then
+			purchaseButton:SetAttribute("overrideBankType", bankType)
+		end
+		module:UpdateAllBags()
 	end)
 
 	-- Delay updates for data jam
@@ -1510,7 +1634,9 @@ function module:OnLogin()
 	end)
 
 	B:RegisterEvent("GET_ITEM_INFO_RECEIVED", function()
-		updater.delay = 1
-		updater:Show()
+		if module.Bags and module.Bags:IsShown() then
+			updater.delay = 1
+			updater:Show()
+		end
 	end)
 end

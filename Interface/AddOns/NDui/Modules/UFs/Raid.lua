@@ -3,14 +3,27 @@ local B, C, L, DB = unpack(ns)
 local oUF = ns.oUF
 local UF = B:GetModule("UnitFrames")
 
-local strmatch, format, wipe = strmatch, format, wipe
-local pairs, ipairs, next, tonumber, unpack, gsub = pairs, ipairs, next, tonumber, unpack, gsub
+local strmatch, format = strmatch, format
+local pairs, next, tonumber, gsub = pairs, next, tonumber, gsub
 local GetSpellName = C_Spell.GetSpellName
 local InCombatLockdown = InCombatLockdown
-local GetTime, IsInRaid, IsInGroup = GetTime, IsInRaid, IsInGroup
-local C_ChatInfo_SendAddonMessage = C_ChatInfo.SendAddonMessage
-local LE_PARTY_CATEGORY_HOME = LE_PARTY_CATEGORY_HOME
-local LE_PARTY_CATEGORY_INSTANCE = LE_PARTY_CATEGORY_INSTANCE
+
+-- Out-of-phase group units can bypass aura filters outside encounters.
+local function PostUpdateGroupPhase(element, phaseReason)
+	local owner = element.__owner
+	local enabled = C_InstanceEncounter.IsEncounterInProgress()
+		or (UnitIsVisible(owner.__unit) and not phaseReason)
+
+	if owner.Buffs then
+		owner.Buffs:SetEnabled(enabled)
+	end
+	if owner.Debuffs then
+		owner.Debuffs:SetEnabled(enabled)
+	end
+	if owner.BigDefensives then
+		owner.BigDefensives:SetEnabled(enabled)
+	end
+end
 
 -- RaidFrame Elements
 function UF:CreateRaidIcons(self)
@@ -37,10 +50,12 @@ function UF:CreateRaidIcons(self)
 	summon:SetSize(32, 32)
 	summon:SetPoint("CENTER", parent)
 	self.SummonIndicator = summon
+
+	self.PhaseIndicator.PostUpdate = PostUpdateGroupPhase
 end
 
 function UF:UpdateTargetBorder()
-	if UnitIsUnit("target", self.unit) then
+	if UnitIsUnit("target", self.__unit) then
 		self.TargetBorder:Show()
 	else
 		self.TargetBorder:Hide()
@@ -58,14 +73,14 @@ function UF:CreateTargetBorder(self)
 end
 
 function UF:UpdateThreatBorder(_, unit)
-	if unit ~= self.unit then return end
+	if unit ~= self.__unit then return end
 
 	local element = self.ThreatIndicator
 	local status = UnitThreatSituation(unit)
 
 	if status and status > 1 then
-		local r, g, b = unpack(oUF.colors.threat[status])
-		element:SetBackdropBorderColor(r, g, b)
+		local color = oUF.colors.threat[status]
+		element:SetBackdropBorderColor(color:GetRGB())
 		element:Show()
 	else
 		element:Hide()

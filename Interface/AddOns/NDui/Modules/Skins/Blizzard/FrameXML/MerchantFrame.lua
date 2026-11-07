@@ -10,6 +10,7 @@ local function reskinMerchantItem(item)
 	B.StripTextures(item)
 	B.CreateBDFrame(item, .25)
 
+	if button.Mask then button.Mask:Hide() end
 	B.StripTextures(button)
 	button:ClearAllPoints()
 	button:SetPoint("LEFT", item, 4, 0)
@@ -18,6 +19,7 @@ local function reskinMerchantItem(item)
 	hl:SetInside()
 
 	icon:SetInside()
+	B:ResetTexCoord(icon)
 	button.bg = B.ReskinIcon(icon)
 	B.ReskinIconBorder(button.IconBorder)
 	button.IconOverlay:SetInside()

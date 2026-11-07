@@ -1,24 +1,27 @@
 local _, ns = ...
 local B, C, L, DB = unpack(ns)
-local oUF = ns.oUF
 ----------------------------
 -- yClassColors, by yleaf
 -- NDui MOD
 ----------------------------
-local format, ipairs, tinsert = string.format, ipairs, table.insert
+local format, ipairs = string.format, ipairs
 local C_FriendList_GetWhoInfo = C_FriendList.GetWhoInfo
 local C_FriendList_GetFriendInfoByIndex = C_FriendList.GetFriendInfoByIndex
 local C_BattleNet_GetFriendAccountInfo = C_BattleNet.GetFriendAccountInfo
 
 -- Colors
 local function classColor(class, showRGB)
-	local color = DB.ClassColors[DB.ClassList[class] or class]
-	if not color then color = DB.ClassColors["PRIEST"] end
+	local classFile = class
+	if B:NotSecretValue(class) then
+		classFile = DB.ClassList[class] or class
+	end
+	local color = classFile and C_ClassColor.GetClassColor(classFile)
+	if not color then color = C_ClassColor.GetClassColor("PRIEST") end
 
 	if showRGB then
-		return color.r, color.g, color.b
+		return color:GetRGB()
 	else
-		return "|c"..color.colorStr
+		return color:GenerateHexColorMarkup()
 	end
 end
 
@@ -41,7 +44,7 @@ local repColor = {
 }
 
 local function smoothColor(cur, max, color)
-	local r, g, b = oUF:RGBColorGradient(cur, max, unpack(color))
+	local r, g, b = B:RGBColorGradient(cur, max, unpack(color))
 	return B.HexRGB(r, g, b)
 end
 
@@ -54,7 +57,7 @@ end
 local function updateGuildView()
 	currentView = currentView or GetCVar("guildRosterView")
 
-	local playerArea = GetRealZoneText()
+	local playerArea = GetAreaText()
 	local buttons = GuildRosterContainer.buttons
 
 	for _, button in ipairs(buttons) do
@@ -103,6 +106,8 @@ local FRIENDS_LEVEL_TEMPLATE = FRIENDS_LEVEL_TEMPLATE:gsub("%%d", "%%s")
 FRIENDS_LEVEL_TEMPLATE = FRIENDS_LEVEL_TEMPLATE:gsub("%$d", "%$s")
 
 hooksecurefunc(FriendsListFrame.ScrollBox, "Update", function(self)
+	local playerArea = GetAreaText()
+
 	for i = 1, self.ScrollTarget:GetNumChildren() do
 		local button = select(i, self.ScrollTarget:GetChildren())
 		local nameText, infoText
@@ -122,7 +127,6 @@ hooksecurefunc(FriendsListFrame.ScrollBox, "Update", function(self)
 					local gameAccountInfo = accountInfo.gameAccountInfo
 					if gameAccountInfo.isOnline and gameAccountInfo.clientProgram == BNET_CLIENT_WOW then
 						local charName = gameAccountInfo.characterName
-						local faction = gameAccountInfo.factionName
 						local class = gameAccountInfo.className or UNKNOWN
 						local zoneName = gameAccountInfo.areaName or UNKNOWN
 						if accountName and charName and class then
@@ -141,44 +145,38 @@ hooksecurefunc(FriendsListFrame.ScrollBox, "Update", function(self)
 	end
 end)
 
--- Whoframe
-local columnTable = {
-	["zone"] = "",
-	["guild"] = "",
-	["race"] = "",
-}
+if FriendsListSocialCardMixin then
+	local function getSocialFriendInfo(self)
+		local accountInfo = self.elementData and self.elementData.accountInfo
+		local gameAccountInfo = accountInfo and accountInfo.gameAccountInfo
+		if not gameAccountInfo or not gameAccountInfo.isOnline or gameAccountInfo.clientProgram ~= BNET_CLIENT_WOW then return end
 
-local currentType = "zone"
-hooksecurefunc(C_FriendList, "SortWho", function(sortType)
-	currentType = sortType
-end)
-
-hooksecurefunc(WhoFrame.ScrollBox, "Update", function(self)
-	local playerZone = GetRealZoneText()
-	local playerGuild = GetGuildInfo("player")
-	local playerRace = UnitRace("player")
-
-	for i = 1, self.ScrollTarget:GetNumChildren() do
-		local button = select(i, self.ScrollTarget:GetChildren())
-
-		local nameText = button.Name
-		local levelText = button.Level
-		local variableText = button.Variable
-
-		local info = C_FriendList_GetWhoInfo(button.index)
-		if info then
-			local guild, level, race, zone, class = info.fullGuildName, info.level, info.raceStr, info.area, info.filename
-			if zone == playerZone then zone = "|cff00ff00"..zone end
-			if guild == playerGuild then guild = "|cff00ff00"..guild end
-			if race == playerRace then race = "|cff00ff00"..race end
-
-			columnTable.zone = zone or ""
-			columnTable.guild = guild or ""
-			columnTable.race = race or ""
-
-			nameText:SetTextColor(classColor(class, true))
-			levelText:SetText(diffColor(level)..level)
-			variableText:SetText(columnTable[currentType])
-		end
+		return accountInfo, gameAccountInfo
 	end
-end)
+
+	hooksecurefunc(FriendsListSocialCardMixin, "RefreshFriendCharacterDataDisplayText", function(self)
+		local accountInfo, gameAccountInfo = getSocialFriendInfo(self)
+		if not accountInfo then return end
+
+		local class = gameAccountInfo.classFilename
+		if not class or class == "" then class = gameAccountInfo.className end
+		local name = FriendsListUtil.GetFormattedCharacterName(accountInfo)
+		if name and class then
+			self.Name:SetText(classColor(class)..name.."|r")
+		end
+		if gameAccountInfo.characterLevel then
+			local level = gameAccountInfo.characterLevel
+			self.Level:SetText(diffColor(level)..format(SOCIAL_UI_RECENT_ALLIES_CARD_LEVEL_DISPLAY_FORMAT, level).."|r")
+		end
+		if gameAccountInfo.className and class then
+			self.Class:SetText(classColor(class)..gameAccountInfo.className.."|r")
+		end
+	end)
+
+	hooksecurefunc(FriendsListSocialCardMixin, "RefreshLocationDisplayText", function(self)
+		local _, gameAccountInfo = getSocialFriendInfo(self)
+		if gameAccountInfo and gameAccountInfo.areaName == GetAreaText() then
+			self.Location:SetText(format("|cff00ff00%s|r", gameAccountInfo.areaName))
+		end
+	end)
+end

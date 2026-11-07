@@ -2,16 +2,23 @@ local _, ns = ...
 local B, C, L, DB = unpack(ns)
 if DB.Client ~= "zhCN" then return end
 
-local strsplit, pairs = string.split, pairs
+local strsplit, ipairs = string.split, ipairs
 
 local hx = {
-	"Rematch美化更新；",
-	"稀有通报忽略列表更新；",
-	"自动交互的屏蔽列表更新；",
-	"界面美化更新；",
-	"添加一个海妖戒指宝石的取用工具；",
-	"更新支持11.1版本；",
-	"部分反馈的问题调整。",
+	"姓名板性能优化；",
+	"恢复施法者姓名板染色；",
+	"团队减益新增边框尺寸滑块；",
+	"玩家自身不再显示去饱和效果；",
+	"修复施法条打断者的显示问题；",
+	"更新内置oUF、LAB库；",
+	"背包新增滚动支持，控制台新增背包高度滑块；",
+	"修复小地图按钮回收复用问题；",
+	"大秘境中屏蔽频道切换；",
+	"修复聊天栏、私聊等若干报错；",
+	"修复声望巅峰信息显示；",
+	"修复登录时耐久度返回空值的报错；",
+	"更新默认设置与本地化文本；",
+	"其它反馈问题的调整。",
 }
 
 local f
@@ -34,7 +41,7 @@ local function changelog()
 	lr:SetPoint("TOP", 50, -35)
 
 	local offset = 0
-	for n, t in pairs(hx) do
+	for n, t in ipairs(hx) do
 		B.CreateFS(f, 14, n..". "..t, false, "TOPLEFT", 15, -(50 + offset))
 		offset = offset + 24
 	end

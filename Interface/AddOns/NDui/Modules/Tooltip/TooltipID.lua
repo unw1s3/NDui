@@ -3,13 +3,17 @@ local B, C, L, DB = unpack(ns)
 local TT = B:GetModule("Tooltip")
 
 local strmatch, format, tonumber, select = string.match, string.format, tonumber, select
+local canaccessallvalues = canaccessallvalues
 local GetUnitName = GetUnitName
 local IsPlayerSpell = IsPlayerSpell
-local C_TradeSkillUI_GetRecipeReagentItemLink = C_TradeSkillUI.GetRecipeFixedReagentItemLink
-local C_CurrencyInfo_GetCurrencyListLink = C_CurrencyInfo.GetCurrencyListLink
 local C_MountJournal_GetMountFromSpell = C_MountJournal.GetMountFromSpell
-local BAGSLOT, BANK = BAGSLOT, BANK
+local ShouldAurasBeSecret = C_Secrets.ShouldAurasBeSecret
+local ShouldUnitAuraIndexBeSecret = C_Secrets.ShouldUnitAuraIndexBeSecret
+local ShouldUnitAuraInstanceBeSecret = C_Secrets.ShouldUnitAuraInstanceBeSecret
+local BAGSLOT, BANK, UNKNOWN = BAGSLOT, BANK, UNKNOWN
 local LEARNT_STRING = "|cffff0000"..ALREADY_LEARNED.."|r"
+local ITEM_LEVEL_STR = gsub(ITEM_LEVEL_PLUS, "%+", "")
+ITEM_LEVEL_STR = format("|cffffd100%s|r|n%%s", ITEM_LEVEL_STR)
 
 local types = {
 	spell = SPELLS.."ID:",
@@ -28,7 +32,7 @@ function TT:AddLineForID(id, linkType, noadd)
 		local line = _G[self:GetName().."TextLeft"..i]
 		if not line then break end
 		local text = line:GetText()
-		if text and text == linkType then return end
+		if text and B:NotSecretValue(text) and text == linkType then return end
 	end
 
 	if self.__isHoverTip and linkType == types.spell and IsPlayerSpell(id) and C_MountJournal_GetMountFromSpell(id) then
@@ -41,7 +45,7 @@ function TT:AddLineForID(id, linkType, noadd)
 		local bagCount = C_Item.GetItemCount(id)
 		-- bank, ?, reagentbank, accountbank
 		local bankCount = C_Item.GetItemCount(id, true, nil, true, true) - bagCount
-		local itemStackCount = select(8, C_Item.GetItemInfo(id))
+		local name, _, _, itemLevel, _, _, _, itemStackCount, _, _, _, classID = C_Item.GetItemInfo(id)
 		if bankCount > 0 then
 			self:AddDoubleLine(BAGSLOT.."/"..BANK..":", DB.InfoColor..bagCount.."/"..bankCount)
 		elseif bagCount > 0 then
@@ -49,6 +53,19 @@ function TT:AddLineForID(id, linkType, noadd)
 		end
 		if itemStackCount and itemStackCount > 1 then
 			self:AddDoubleLine(L["Stack Cap"]..":", DB.InfoColor..itemStackCount)
+		end
+
+		-- iLvl info like retail
+		if name and itemLevel and itemLevel > 1 and DB.iLvlClassIDs[classID] then
+			local tipName = self:GetName()
+			local index = strfind(tipName, "Shopping") and 3 or 2
+			local line = _G[tipName.."TextLeft"..index]
+			local lineText = line and line:GetText()
+			if lineText then
+				line:SetFormattedText(ITEM_LEVEL_STR, itemLevel, lineText)
+				line:SetJustifyH("LEFT")
+				line:SetWidth(ceil(line:GetStringWidth())) -- make sure it won't affect by RatingBuster
+			end
 		end
 	end
 
@@ -58,6 +75,7 @@ end
 
 function TT:SetHyperLinkID(link)
 	if self:IsForbidden() then return end
+	if not link then return end
 
 	local linkType, id = strmatch(link, "^(%a+):(%d+)")
 	if not linkType or not id then return end
@@ -81,44 +99,51 @@ function TT:SetupTooltipID()
 	if C.db["Tooltip"]["HideAllID"] then return end
 
 	-- Update all
+	C_CVar.SetCVar("tooltipShowAuraSpellIDs", 1)
+
 	hooksecurefunc(GameTooltip, "SetHyperlink", TT.SetHyperLinkID)
 	hooksecurefunc(ItemRefTooltip, "SetHyperlink", TT.SetHyperLinkID)
 
 	-- Spells
-	hooksecurefunc(GameTooltip, "SetUnitAura", function(self, ...)
-		if self:IsForbidden() then return end
-		local auraData = C_UnitAuras.GetAuraDataByIndex(...)
-		if not auraData then return end
-		local caster = auraData.sourceUnit
-		local id = auraData.spellId
-		if id then
-			TT.AddLineForID(self, id, types.spell)
-		end
-		if caster then
-			local name = GetUnitName(caster, true)
-			local hexColor = B.HexRGB(B.UnitColor(caster))
-			self:AddDoubleLine(L["From"]..":", hexColor..name)
-			self:Show()
-		end
-	end)
-
-	local function UpdateAuraTip(self, unit, auraInstanceID)
-		local data = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, auraInstanceID)
-		if not data then return end
-
+	local function HandleAuraData(self, data)
 		local id, caster = data.spellId, data.sourceUnit
 		if id then
 			TT.AddLineForID(self, id, types.spell)
 		end
 		if caster then
-			local name = GetUnitName(caster, true)
-			local hexColor = B.HexRGB(B.UnitColor(caster))
-			self:AddDoubleLine(L["From"]..":", hexColor..name)
-			self:Show()
+			if B:IsSecretValue(caster) then
+				local ok, name = pcall(UnitName, caster)
+				if ok then
+					self:AddDoubleLine(L["From"]..":", name)
+					self:Show()
+				end
+			else
+				local name = GetUnitName(caster, true)
+				local hexColor = B.UnitColorString(caster)
+				self:AddDoubleLine(L["From"]..":", hexColor..(name or UNKNOWN))
+				self:Show()
+			end
 		end
+	end
+
+	hooksecurefunc(GameTooltip, "SetUnitAura", function(self, unit, index, filter)
+		if self:IsForbidden() or ShouldAurasBeSecret() or not canaccessallvalues(unit, index, filter) or ShouldUnitAuraIndexBeSecret(unit, index, filter) then return end
+		local data = C_UnitAuras.GetAuraDataByIndex(unit, index, filter)
+		if not data then return end
+
+		HandleAuraData(self, data)
+	end)
+
+	local function UpdateAuraTip(self, unit, auraInstanceID)
+		if self:IsForbidden() or ShouldAurasBeSecret() or not canaccessallvalues(unit, auraInstanceID) or ShouldUnitAuraInstanceBeSecret(unit, auraInstanceID) then return end
+		local data = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, auraInstanceID)
+		if not data then return end
+
+		HandleAuraData(self, data)
 	end
 	hooksecurefunc(GameTooltip, "SetUnitBuffByAuraInstanceID", UpdateAuraTip)
 	hooksecurefunc(GameTooltip, "SetUnitDebuffByAuraInstanceID", UpdateAuraTip)
+	hooksecurefunc(GameTooltip, "SetUnitAuraByAuraInstanceID", UpdateAuraTip)
 
 	hooksecurefunc("SetItemRef", function(link)
 		local id = tonumber(strmatch(link, "spell:(%d+)"))

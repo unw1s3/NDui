@@ -7,18 +7,19 @@ local info = module:RegisterInfobar("Gold", C.Infobar.GoldPos)
 
 local format, pairs, wipe, unpack = string.format, pairs, table.wipe, unpack
 local CLASS_ICON_TCOORDS = CLASS_ICON_TCOORDS
-local GetMoney, GetNumWatchedTokens, Ambiguate = GetMoney, GetNumWatchedTokens, Ambiguate
+local GetMoney, Ambiguate = GetMoney, Ambiguate
 local C_Timer_After, IsControlKeyDown, IsShiftKeyDown = C_Timer.After, IsControlKeyDown, IsShiftKeyDown
 local C_CurrencyInfo_GetCurrencyInfo = C_CurrencyInfo.GetCurrencyInfo
 local C_CurrencyInfo_GetBackpackCurrencyInfo = C_CurrencyInfo.GetBackpackCurrencyInfo
-local CalculateTotalNumberOfFreeBagSlots = CalculateTotalNumberOfFreeBagSlots
-local C_TransmogCollection_GetItemInfo = C_TransmogCollection.GetItemInfo
+local CalculateTotalNumberOfFreeBagSlots = C_Container.CalculateTotalNumberOfFreeBagSlots
 local C_Container_UseContainerItem = C_Container.UseContainerItem
 local C_Container_GetContainerNumSlots = C_Container.GetContainerNumSlots
 local C_Container_GetContainerItemInfo = C_Container.GetContainerItemInfo
 
 local slotString = L["Bags"]..": %s%d"
 local showGoldGap = 100 * 1e4
+local maxAccounts = 30 -- max visible characters
+local TIER_CHARGE_ID = 3465 -- 12.1 S2
 
 local profit, spent, oldMoney = 0, 0, 0
 local myName, myRealm = DB.MyName, DB.MyRealm
@@ -117,7 +118,7 @@ function RebuildCharList()
 			if not (realm == myRealm and name == myName) then
 				index = index + 1
 				if not menuList[index] then menuList[index] = {} end
-				menuList[index].text = B.HexRGB(B.ClassColor(value[2]))..Ambiguate(name.."-"..realm, "none")
+				menuList[index].text = B.ClassColorString(value[2])..Ambiguate(name.."-"..realm, "none")
 				menuList[index].notCheckable = true
 				menuList[index].arg1 = realm
 				menuList[index].arg2 = name
@@ -151,7 +152,7 @@ info.onMouseUp = function(self, btn)
 		if NDuiADB["ShowSlots"] then
 			ToggleAllBags()
 		else
-			--if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
+			if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end -- fix by LibShowUIPanel
 			ToggleCharacter("TokenFrame")
 		end
 	end
@@ -179,19 +180,24 @@ info.onEnter = function(self)
 	local totalGold = 0
 	GameTooltip:AddLine(L["RealmCharacter"], .6,.8,1)
 
+	local isShiftKeyDown = IsShiftKeyDown()
+	local currentAccounts = 1
+
 	if NDuiADB["totalGold"][myRealm] then
 		for k, v in pairs(NDuiADB["totalGold"][myRealm]) do
 			local gold, class = unpack(v)
 			local name = Ambiguate(k.."-"..myRealm, "none")
 			if gold > showGoldGap or UnitIsUnit(name, "player") then
-				local r, g, b = B.ClassColor(class)
-				GameTooltip:AddDoubleLine(getClassIcon(class)..name, module:GetMoneyString(gold), r,g,b, 1,1,1)
+				if (isShiftKeyDown or currentAccounts < maxAccounts) then
+					local r, g, b = B.ClassColor(class)
+					GameTooltip:AddDoubleLine(getClassIcon(class)..name, module:GetMoneyString(gold), r,g,b, 1,1,1)
+					currentAccounts = currentAccounts + 1
+				end
 				totalGold = totalGold + gold
 			end
 		end
 	end
 
-	local isShiftKeyDown = IsShiftKeyDown()
 	for realm, data in pairs(NDuiADB["totalGold"]) do
 		if realm ~= myRealm then
 			for k, v in pairs(data) do
@@ -218,7 +224,7 @@ info.onEnter = function(self)
 	GameTooltip:AddDoubleLine(TOTAL..":", module:GetMoneyString(totalGold + accountmoney), .6,.8,1, 1,1,1)
 
 	title = false
-	local chargeInfo = C_CurrencyInfo_GetCurrencyInfo(2813) -- Tier charges
+	local chargeInfo = C_CurrencyInfo_GetCurrencyInfo(TIER_CHARGE_ID) -- Tier charges
 	if chargeInfo then
 		if not title then
 			GameTooltip:AddLine(" ")
@@ -270,10 +276,9 @@ local function startSelling()
 			if stop then return end
 			local info = C_Container_GetContainerItemInfo(bag, slot)
 			if info then
-				if not cache["b"..bag.."s"..slot] and info.hyperlink and not info.hasNoValue
+				if not cache["b"..bag.."s"..slot] and not info.hasNoValue
 				and (info.quality == 0 or NDuiADB["CustomJunkList"][info.itemID])
-				and (not BAG:IsPetTrashCurrency(info.itemID))
-				and (not C_TransmogCollection_GetItemInfo(info.hyperlink) or not B.IsUnknownTransmog(bag, slot)) then
+				and (not BAG:IsPetTrashCurrency(info.itemID)) then
 					cache["b"..bag.."s"..slot] = true
 					C_Container_UseContainerItem(bag, slot)
 					C_Timer_After(.15, startSelling)

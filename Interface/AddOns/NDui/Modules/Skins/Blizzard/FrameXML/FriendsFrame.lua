@@ -58,7 +58,15 @@ tinsert(C.defaultThemes, function()
 		end
 	end
 	FriendsFrameIcon:Hide()
-	B.StripTextures(IgnoreListFrame)
+
+	B.StripTextures(FriendsFrame.IgnoreListWindow)
+	B.SetBD(FriendsFrame.IgnoreListWindow)
+	local closeButton = FriendsFrame.IgnoreListWindow.CloseButton or select(4, FriendsFrame.IgnoreListWindow:GetChildren())
+	if closeButton then
+		B.ReskinClose(closeButton)
+	end
+	B.ReskinTrimScroll(FriendsFrame.IgnoreListWindow.ScrollBar)
+	B.Reskin(FriendsFrame.IgnoreListWindow.UnignorePlayerButton)
 
 	local INVITE_RESTRICTION_NONE = 9
 	hooksecurefunc("FriendsFrame_UpdateFriendButton", function(button)
@@ -105,14 +113,12 @@ tinsert(C.defaultThemes, function()
 	bg:SetPoint("BOTTOMRIGHT", -2, 2)
 	bg:SetBackdropColor(0, .6, 1, .25)
 
-	local broadcastButton = FriendsFrameBattlenetFrame.BroadcastButton
-	broadcastButton:SetSize(20, 20)
-	broadcastButton:GetNormalTexture():SetAlpha(0)
-	broadcastButton:GetPushedTexture():SetAlpha(0)
-	B.Reskin(broadcastButton)
-	local newIcon = broadcastButton:CreateTexture(nil, "ARTWORK")
-	newIcon:SetAllPoints()
-	newIcon:SetTexture("Interface\\FriendsFrame\\BroadcastIcon")
+	local menuButton = FriendsFrameBattlenetFrame.ContactsMenuButton
+	if menuButton then
+		B.ReskinArrow(menuButton, "down")
+		menuButton.Icon:Hide()
+		menuButton:SetSize(22, 22)
+	end
 
 	local broadcastFrame = FriendsFrameBattlenetFrame.BroadcastFrame
 	B.StripTextures(broadcastFrame)
@@ -134,14 +140,9 @@ tinsert(C.defaultThemes, function()
 	B.ReskinPortraitFrame(FriendsFrame)
 	B.Reskin(FriendsFrameAddFriendButton)
 	B.Reskin(FriendsFrameSendMessageButton)
-	B.Reskin(FriendsFrameIgnorePlayerButton)
-	B.Reskin(FriendsFrameUnsquelchButton)
 	B.ReskinTrimScroll(FriendsListFrame.ScrollBar)
-	B.ReskinTrimScroll(IgnoreListFrame.ScrollBar)
-	B.ReskinTrimScroll(WhoFrame.ScrollBar)
 	B.ReskinTrimScroll(FriendsFriendsFrame.ScrollBar)
 	B.ReskinDropDown(FriendsFrameStatusDropdown)
-	B.ReskinDropDown(WhoFrameDropdown)
 	B.ReskinDropDown(FriendsFriendsFrameDropdown)
 	FriendsFrameStatusDropdown:SetWidth(58)
 	B.Reskin(FriendsListFrameContinueButton)
@@ -152,30 +153,15 @@ tinsert(C.defaultThemes, function()
 	B.SetBD(FriendsFriendsFrame)
 	B.Reskin(FriendsFriendsFrame.SendRequestButton)
 	B.Reskin(FriendsFriendsFrame.CloseButton)
-	B.Reskin(WhoFrameWhoButton)
-	B.Reskin(WhoFrameAddFriendButton)
-	B.Reskin(WhoFrameGroupInviteButton)
 	B.Reskin(AddFriendEntryFrameAcceptButton)
 	B.Reskin(AddFriendEntryFrameCancelButton)
-	B.Reskin(AddFriendInfoFrameContinueButton)
-
-	for i = 1, 4 do
-		B.StripTextures(_G["WhoFrameColumnHeader"..i])
-	end
-
-	B.StripTextures(WhoFrameListInset)
-	WhoFrameEditBoxInset:Hide()
-	local whoBg = B.CreateBDFrame(WhoFrameEditBox, 0, true)
-	whoBg:SetPoint("TOPLEFT", WhoFrameEditBoxInset)
-	whoBg:SetPoint("BOTTOMRIGHT", WhoFrameEditBoxInset, -1, 1)
 
 	for i = 1, 3 do
-		B.StripTextures(_G["FriendsTabHeaderTab"..i])
+		local tab = select(i, FriendsTabHeader.TabSystem:GetChildren())
+		if tab then
+			B.ReskinTab(tab)
+		end
 	end
-
-	WhoFrameWhoButton:SetPoint("RIGHT", WhoFrameAddFriendButton, "LEFT", -1, 0)
-	WhoFrameAddFriendButton:SetPoint("RIGHT", WhoFrameGroupInviteButton, "LEFT", -1, 0)
-	FriendsFrameTitleText:SetPoint("TOP", FriendsFrame, "TOP", 0, -8)
 
 	-- Recruite frame
 

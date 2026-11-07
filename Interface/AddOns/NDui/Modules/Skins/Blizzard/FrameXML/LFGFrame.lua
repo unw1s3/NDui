@@ -43,20 +43,18 @@ end
 
 tinsert(C.defaultThemes, function()
 	if not C.db["Skins"]["BlizzardSkins"] then return end
-	-- LFDFrame
-	hooksecurefunc("LFGDungeonListButton_SetDungeon", function(button)
-		if not button.expandOrCollapseButton.styled then
-			B.ReskinCheck(button.enableButton)
-			B.ReskinCollapse(button.expandOrCollapseButton)
-
-			button.expandOrCollapseButton.styled = true
+	if not LFDParentFrame then
+		if LFGInvitePopup then
+			B.StripTextures(LFGInvitePopup)
+			B.SetBD(LFGInvitePopup)
+			B.Reskin(LFGInvitePopupAcceptButton)
+			B.Reskin(LFGInvitePopupDeclineButton)
+			B.ReskinRole(LFGInvitePopupRoleButtonTank)
+			B.ReskinRole(LFGInvitePopupRoleButtonHealer)
+			B.ReskinRole(LFGInvitePopupRoleButtonDPS)
 		end
-
-		button.enableButton:GetCheckedTexture():SetAtlas("checkmark-minimal")
-		local disabledTexture = button.enableButton:GetDisabledCheckedTexture()
-		disabledTexture:SetAtlas("checkmark-minimal")
-		disabledTexture:SetDesaturated(true)
-	end)
+		return
+	end
 
 	B.StripTextures(LFDParentFrame)
 	LFDQueueFrameBackground:Hide()

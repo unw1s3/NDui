@@ -4,7 +4,7 @@ local M = B:RegisterModule("Misc")
 
 local _G = getfenv(0)
 local select, unpack, tonumber, gsub = select, unpack, tonumber, gsub
-local InCombatLockdown, IsModifiedClick, IsAltKeyDown = InCombatLockdown, IsModifiedClick, IsAltKeyDown
+local IsModifiedClick, IsAltKeyDown = IsModifiedClick, IsAltKeyDown
 local GetNumArchaeologyRaces = GetNumArchaeologyRaces
 local GetNumArtifactsByRace = GetNumArtifactsByRace
 local GetArtifactInfoByRace = GetArtifactInfoByRace
@@ -24,7 +24,6 @@ local GetSavedInstanceInfo = GetSavedInstanceInfo
 local SetSavedInstanceExtend = SetSavedInstanceExtend
 local RequestRaidInfo, RaidInfoFrame_Update = RequestRaidInfo, RaidInfoFrame_Update
 local IsGuildMember, C_BattleNet_GetGameAccountInfoByGUID, C_FriendList_IsFriend = IsGuildMember, C_BattleNet.GetGameAccountInfoByGUID, C_FriendList.IsFriend
-local C_Map_GetMapInfo, C_Map_GetBestMapForUnit = C_Map.GetMapInfo, C_Map.GetBestMapForUnit
 
 --[[
 	Miscellaneous 各种有用没用的小玩意儿
@@ -40,7 +39,7 @@ end
 function M:OnLogin()
 	for name, func in next, MISC_LIST do
 		if name and type(func) == "function" then
-			func()
+			xpcall(func, geterrorhandler())
 		end
 	end
 
@@ -55,8 +54,8 @@ function M:OnLogin()
 	M:UpdateFasterLoot()
 	M:TradeTargetInfo()
 	M:BlockStrangerInvite()
+	M:TogglePetHappiness()
 	M:ToggleBossBanner()
-	M:ToggleBossEmote()
 	M:FasterMovieSkip()
 	M:EnhanceDressup()
 	M:FuckTrainSound()
@@ -65,21 +64,9 @@ function M:OnLogin()
 	M:BaudErrorFrameHelpTip()
 	M:EnhancedPicker()
 	M:UpdateMaxZoomLevel()
-	M:MoveBlizzFrames()
 	M:HandleNDuiTitle()
-
-	-- Auto chatBubbles
-	if NDuiADB["AutoBubbles"] then
-		local function updateBubble()
-			local name, instType = GetInstanceInfo()
-			if name and instType == "raid" then
-				SetCVar("chatBubbles", 1)
-			else
-				SetCVar("chatBubbles", 0)
-			end
-		end
-		B:RegisterEvent("PLAYER_ENTERING_WORLD", updateBubble)
-	end
+	M:ToggleAddOnProfiler()
+	M:HideBlizzHelpTip()
 
 	-- Readycheck sound on master channel
 	B:RegisterEvent("READY_CHECK", function()
@@ -91,7 +78,7 @@ function M:OnLogin()
 	if deleteDialog.OnShow then
 		hooksecurefunc(deleteDialog, "OnShow", function(self)
 			if C.db["Misc"]["InstantDelete"] then
-				self.editBox:SetText(DELETE_ITEM_CONFIRM_STRING)
+				self.EditBox:SetText(DELETE_ITEM_CONFIRM_STRING)
 			end
 		end)
 	end
@@ -107,25 +94,13 @@ function M:ToggleBossBanner()
 	end
 end
 
--- Hide boss emote
-function M:ToggleBossEmote()
-	if C.db["Misc"]["HideBossEmote"] then
-		RaidBossEmoteFrame:UnregisterAllEvents()
-	else
-		RaidBossEmoteFrame:RegisterEvent("RAID_BOSS_EMOTE")
-		RaidBossEmoteFrame:RegisterEvent("RAID_BOSS_WHISPER")
-		RaidBossEmoteFrame:RegisterEvent("CLEAR_BOSS_EMOTES")
-	end
-end
-
 -- Get Naked
 function M:NakedIcon()
-	local bu = CreateFrame("Button", nil, CharacterFrameInsetRight)
-	bu:SetSize(33, 35)
-	bu:SetPoint("RIGHT", PaperDollSidebarTab1, "LEFT", -4, 0)
+	local bu = CreateFrame("Button", nil, PaperDollFrame)
+	bu:SetSize(42, 42)
+	bu:SetPoint("RIGHT", PaperDollSidebarTab1, "LEFT", -2, 0)
 	B.PixelIcon(bu, "Interface\\ICONS\\SPELL_SHADOW_TWISTEDFAITH", true)
-	bu.bg:SetPoint("TOPLEFT", 2, -3)
-	bu.bg:SetPoint("BOTTOMRIGHT", 0, -2)
+	bu.bg:SetInside(nil, 3, 3)
 	B.AddTooltip(bu, "ANCHOR_RIGHT", L["Get Naked"])
 
 	local function UnequipItemInSlot(i)
@@ -174,9 +149,13 @@ function M:ExtendInstance()
 end
 
 -- Reanchor Vehicle
+local mover = CreateFrame("Frame", "NDuiVehicleSeatMover", UIParent)
+mover:SetSize(125, 125)
+mover:SetPoint("BOTTOMRIGHT")
+
 function M:VehicleSeatMover()
-	local frame = CreateFrame("Frame", "NDuiVehicleSeatMover", UIParent)
-	frame:SetSize(125, 125)
+	local frame = _G["NDuiVehicleSeatMover"]
+	if not frame then return end
 	B.Mover(frame, L["VehicleSeat"], "VehicleSeat", {"BOTTOMRIGHT", UIParent, -400, 30})
 
 	hooksecurefunc(VehicleSeatIndicator, "SetPoint", function(self, _, parent)
@@ -295,6 +274,8 @@ function M:TradeTargetInfo()
 
 		local guid = UnitGUID("NPC")
 		if not guid then return end
+		if B:IsSecretValue(guid) then return end
+
 		local text = "|cffff0000"..L["Stranger"]
 		if C_BattleNet_GetGameAccountInfoByGUID(guid) or C_FriendList_IsFriend(guid) then
 			text = "|cffffff00"..FRIEND
@@ -326,6 +307,41 @@ function M:BlockStrangerInvite()
 			StaticPopup_Hide("GROUP_INVITE_CONFIRMATION")
 		end
 	end)
+end
+
+-- Hunter pet happiness
+local GetPetHappiness = C_PetInfo and C_PetInfo.GetPetHappiness
+local petHappinessStr, lastHappiness = {
+	[1] = L["PetUnhappy"],
+	[2] = L["PetBadMood"],
+	[3] = L["PetHappy"],
+}
+
+local function CheckPetHappiness(_, unit)
+	if unit ~= "pet" or not GetPetHappiness then return end
+
+	local happiness = GetPetHappiness()
+	if not happiness or happiness == lastHappiness then return end
+
+	local str = petHappinessStr[happiness]
+	local petName = UnitName(unit)
+	if str and petName and B:NotSecretValue(petName) then
+		local msg = format(str, DB.InfoColor, petName)
+		UIErrorsFrame:AddMessage(msg)
+		print(DB.NDuiString, msg)
+	end
+
+	lastHappiness = happiness
+end
+
+function M:TogglePetHappiness()
+	if DB.MyClass ~= "HUNTER" or not GetPetHappiness then return end
+
+	if C.db["Misc"]["PetHappiness"] then
+		B:RegisterEvent("UNIT_HAPPINESS", CheckPetHappiness)
+	else
+		B:UnregisterEvent("UNIT_HAPPINESS", CheckPetHappiness)
+	end
 end
 
 -- Archaeology counts
@@ -402,12 +418,8 @@ do
 		end
 	end)
 
-	hooksecurefunc("UnitPowerBarAlt_SetUp", function(self)
-		local statusFrame = self.statusFrame
-		if statusFrame.enabled then
-			statusFrame:Show()
-			statusFrame.Hide = statusFrame.Show
-		end
+	hooksecurefunc(PlayerPowerBarAlt.statusFrame, "Hide", function(self)
+		self:Show()
 	end)
 
 	local altPowerInfo = {
@@ -566,20 +578,24 @@ function M:JerryWay()
 
 	SlashCmdList["NDUI_JERRY_WAY"] = function(msg)
 		msg = gsub(msg, "(%d)[%.,] (%d)", "%1 %2")
-		local x, y, z = strmatch(msg, "(%S+)%s(%S+)(.*)")
-		if x and y then
-			local mapID = C_Map_GetBestMapForUnit("player")
-			if mapID then
-				local mapInfo = C_Map_GetMapInfo(mapID)
-				local mapName = mapInfo and mapInfo.name
-				if mapName then
-					x = GetCorrectCoord(x)
-					y = GetCorrectCoord(y)
-					if x and y then
-						print(format(pointString, mapID, x*100, y*100, mapName, x, y, z or ""))
-						C_Map.SetUserWaypoint(UiMapPoint.CreateFromCoordinates(mapID, x/100, y/100))
-						C_SuperTrack.SetSuperTrackedUserWaypoint(true)
-					end
+
+		local mapID, x, y, z = strmatch(msg, "^#(%d+)%s+(%S+)%s+(%S+)(.*)")
+		if not mapID then
+			mapID = C_Map.GetBestMapForUnit("player")
+			x, y, z = strmatch(msg, "(%S+)%s+(%S+)(.*)")
+		end
+
+		if tonumber(mapID) and tonumber(x) and tonumber(y) then
+			local mapInfo = C_Map.GetMapInfo(mapID)
+			local mapName = mapInfo and mapInfo.name
+			if mapName then
+				x = GetCorrectCoord(x)
+				y = GetCorrectCoord(y)
+				if x and y then
+					print(format(pointString, mapID, x*100, y*100, mapName, x, y, z or ""))
+					C_Map.SetUserWaypoint(UiMapPoint.CreateFromCoordinates(mapID, x/100, y/100))
+					C_SuperTrack.SetSuperTrackedUserWaypoint(true)
+					--C_Map.OpenWorldMap(mapID)
 				end
 			end
 		end
@@ -612,90 +628,116 @@ function M:BaudErrorFrameHelpTip()
 end
 
 -- Buttons to enhance popup menu
-function M:CustomMenu_AddFriend(rootDescription, data, name)
-	rootDescription:CreateButton(DB.InfoColor..ADD_CHARACTER_FRIEND, function()
-		local fullName = data.server and data.name.."-"..data.server or data.name
-		C_FriendList.AddFriend(name or fullName)
-	end)
+function M:MenuFrame_Hide()
+	local menuFrame = M.MenuButtonFrame and M.MenuButtonFrame:GetParent()
+	if menuFrame and menuFrame.Hide then
+		menuFrame:Hide()
+	end
 end
 
-local guildInviteString = gsub(CHAT_GUILD_INVITE_SEND, HEADER_COLON, "")
-function M:CustomMenu_GuildInvite(rootDescription, data, name)
-	rootDescription:CreateButton(DB.InfoColor..guildInviteString, function()
-		local fullName = data.server and data.name.."-"..data.server or data.name
-		C_GuildInfo.Invite(name or fullName)
-	end)
+function M:MenuButton_AddFriend()
+	if not M.MenuButtonName then return end
+	C_FriendList.AddFriend(M.MenuButtonName)
+	M:MenuFrame_Hide()
 end
 
-function M:CustomMenu_CopyName(rootDescription, data, name)
-	rootDescription:CreateButton(DB.InfoColor..COPY_NAME, function()
-		local editBox = ChatEdit_ChooseBoxForSend()
-		local hasText = (editBox:GetText() ~= "")
-		ChatEdit_ActivateChat(editBox)
-		editBox:Insert(name or data.name)
-		if not hasText then editBox:HighlightText() end
-	end)
+function M:MenuButton_CopyName()
+	if not M.MenuButtonName then return end
+	local editBox = ChatEdit_ChooseBoxForSend()
+	local hasText = (editBox:GetText() ~= "")
+	ChatEdit_ActivateChat(editBox)
+	editBox:Insert(M.MenuButtonName)
+	if not hasText then editBox:HighlightText() end
+	M:MenuFrame_Hide()
 end
 
-function M:CustomMenu_Whisper(rootDescription, data)
-	rootDescription:CreateButton(DB.InfoColor..WHISPER, function()
-		ChatFrame_SendTell(data.name)
-	end)
+function M:MenuButton_GuildInvite()
+	if not M.MenuButtonName then return end
+	GuildInvite(M.MenuButtonName)
+	M:MenuFrame_Hide()
+end
+
+function M:MenuButton_Whisper()
+	if not M.MenuButtonName then return end
+	ChatFrame_SendTell(M.MenuButtonName)
+	M:MenuFrame_Hide()
 end
 
 function M:QuickMenuButton()
 	if not C.db["Misc"]["MenuButton"] then return end
 
-	--hooksecurefunc(UnitPopupManager, "OpenMenu", function(_, which)
-	--	print("MENU_UNIT_"..which)
-	--end)
+	local menuList = {
+		{text = ADD_FRIEND, func = M.MenuButton_AddFriend, color = {0, .6, 1}},
+		{text = gsub(CHAT_GUILD_INVITE_SEND, HEADER_COLON, ""), func = M.MenuButton_GuildInvite, color = {0, .8, 0}},
+		{text = COPY_NAME, func = M.MenuButton_CopyName, color = {1, .8, 0}},
+		{text = WHISPER, func = M.MenuButton_Whisper, color = {1, .5, 1}},
+	}
 
-	Menu.ModifyMenu("MENU_UNIT_SELF", function(_, rootDescription, data)
-		M:CustomMenu_CopyName(rootDescription, data)
-		M:CustomMenu_Whisper(rootDescription, data)
+	local frame = CreateFrame("Frame", "NDuiMenuButtonFrame", UIParent)
+	frame:SetSize(10, 10)
+	frame:SetPoint("TOPLEFT")
+	frame:Hide()
+	frame.buttons = {}
+	for i = 1, 4 do
+		local button = CreateFrame("Button", nil, frame)
+		button:SetSize(25, 10)
+		button:SetPoint("TOPLEFT", frame, (i-1)*28 + 2, -2)
+		B.PixelIcon(button, nil, true)
+		button.Icon:SetColorTexture(unpack(menuList[i].color))
+		button:SetScript("OnClick", menuList[i].func)
+		B.AddTooltip(button, "ANCHOR_TOP", menuList[i].text)
+		frame.buttons[i] = button
+	end
+	M.MenuButtonFrame = frame
+
+	local visibleState = { -- friend, guild, copy, whisper
+		["SELF"] = {false, false, true, true},
+		["TARGET"] = {false, false, true, false},
+		["PLAYER"] = {true, true, true, true},
+		["FRIEND"] = {true, true, true, false},
+		["BN_FRIEND"] = {true, true, true, false},
+		["PARTY"] = {true, true, false, true},
+		["RAID"] = {true, true, false, true},
+		["RAID_PLAYER"] = {true, true, false, true},
+	}
+	hooksecurefunc(UnitPopupManager, "OpenMenu", function(_, which, contextData)
+		local shown = visibleState[which]
+		if not shown then frame:Hide() return end
+
+		if contextData and B:IsSecretValue(contextData.name) then
+			frame:Hide()
+			return
+		end
+
+		for i = 1, 4 do
+			frame.buttons[i]:SetShown(shown[i])
+		end
+
+		local gameAccountInfo = contextData.accountInfo and contextData.accountInfo.gameAccountInfo
+		if gameAccountInfo and gameAccountInfo.characterName and gameAccountInfo.realmName then
+			M.MenuButtonName = gameAccountInfo.characterName.."-"..gameAccountInfo.realmName
+		else
+			M.MenuButtonName = contextData.name.."-"..(contextData.server or DB.MyRealm)
+		end
+		frame:Show()
 	end)
 
-	Menu.ModifyMenu("MENU_UNIT_TARGET", function(_, rootDescription, data)
-		M:CustomMenu_CopyName(rootDescription, data)
-	end)
-
-	Menu.ModifyMenu("MENU_UNIT_PLAYER", function(_, rootDescription, data)
-		M:CustomMenu_GuildInvite(rootDescription, data)
-	end)
-
-	Menu.ModifyMenu("MENU_UNIT_FRIEND", function(_, rootDescription, data)
-		M:CustomMenu_AddFriend(rootDescription, data)
-		M:CustomMenu_GuildInvite(rootDescription, data)
-	end)
-
-	Menu.ModifyMenu("MENU_UNIT_BN_FRIEND", function(_, rootDescription, data)
-		local fullName
-		local gameAccountInfo = data.accountInfo and data.accountInfo.gameAccountInfo
-		if gameAccountInfo then
-			local characterName = gameAccountInfo.characterName
-			local realmName = gameAccountInfo.realmName
-			if characterName and realmName then
-				fullName = characterName.."-"..realmName
+	local menuManagerProxy = Menu.GetManager()
+	hooksecurefunc(menuManagerProxy, "OpenContextMenu", function(manager)
+		local menuFrame = manager:GetOpenMenu()
+		if menuFrame then
+			frame:SetParent(menuFrame)
+			frame:SetPoint("TOPLEFT", menuFrame, 0, 5)
+			for i = 1, 4 do
+				frame.buttons[i]:Hide()
 			end
 		end
-		M:CustomMenu_AddFriend(rootDescription, data, fullName)
-		M:CustomMenu_GuildInvite(rootDescription, data, fullName)
-		M:CustomMenu_CopyName(rootDescription, data, fullName)
 	end)
 
-	Menu.ModifyMenu("MENU_UNIT_PARTY", function(_, rootDescription, data)
-		M:CustomMenu_GuildInvite(rootDescription, data)
-	end)
-
-	Menu.ModifyMenu("MENU_UNIT_RAID", function(_, rootDescription, data)
-		M:CustomMenu_AddFriend(rootDescription, data)
-		M:CustomMenu_GuildInvite(rootDescription, data)
-		M:CustomMenu_CopyName(rootDescription, data)
-		M:CustomMenu_Whisper(rootDescription, data)
-	end)
-
-	Menu.ModifyMenu("MENU_UNIT_RAID_PLAYER", function(_, rootDescription, data)
-		M:CustomMenu_GuildInvite(rootDescription, data)
+	-- clear blocks on tracking menu
+	hooksecurefunc(menuManagerProxy, "OpenMenu", function()
+		M.MenuButtonName = nil
+		frame:Hide()
 	end)
 end
 
@@ -761,14 +803,14 @@ function M:EnhancedPicker()
 
 	local count = 0
 	for class, name in pairs(LOCALIZED_CLASS_NAMES_MALE) do
-		local value = DB.ClassColors[class]
+		local value = C_ClassColor.GetClassColor(class)
 		if value then
 			local bu = B.CreateButton(colorBar, 22, 22, true)
-			bu.Icon:SetColorTexture(value.r, value.g, value.b)
+			bu.Icon:SetColorTexture(value:GetRGB())
 			bu:SetPoint("LEFT", count*22, 0)
-			bu.colorStr = value.colorStr
+			bu.colorStr = value:GenerateHexColor()
 			bu:SetScript("OnClick", M.EnhancedPicker_UpdateColor)
-			B.AddTooltip(bu, "ANCHOR_TOP", "|c"..value.colorStr..name)
+			B.AddTooltip(bu, "ANCHOR_TOP", value:GenerateHexColorMarkup()..name)
 
 			count = count + 1
 		end
@@ -803,7 +845,33 @@ function M:UpdateMaxZoomLevel()
 	SetCVar("cameraDistanceMaxZoomFactor", C.db["Misc"]["MaxZoom"])
 end
 
--- Move and save blizz frames
-function M:MoveBlizzFrames()
-	--B:BlizzFrameMover(CharacterFrame)
+function M:ToggleAddOnProfiler()
+	local function CheckState()
+		return NDuiADB["AddOnProfiler"]
+	end
+
+	C_AddOnProfiler.IsEnabled = function()
+		return CheckState()
+	end
+
+	local bu = CreateFrame("CheckButton", nil, AddonList, "OptionsBaseCheckButtonTemplate")
+	bu:SetHitRectInsets(-5, -5, -5, -5)
+	bu:SetPoint("BOTTOM", 0, 2)
+	B.ReskinCheck(bu)
+	B.CreateFS(bu, 14, L["CPU Usage"], "info", "LEFT", 30, 0)
+	bu:SetChecked(CheckState())
+	bu:SetScript("OnClick", function()
+		NDuiADB["AddOnProfiler"] = bu:GetChecked()
+	end)
+end
+
+function M:HideBlizzHelpTip()
+	local function AcknowledgeTips()
+		for frame in HelpTip.framePool:EnumerateActive() do
+			frame:Acknowledge()
+		end
+	end
+
+	hooksecurefunc(HelpTip, "Show", AcknowledgeTips)
+	C_Timer.After(1, AcknowledgeTips)
 end

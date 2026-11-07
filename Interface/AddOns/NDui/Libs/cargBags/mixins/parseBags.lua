@@ -31,16 +31,25 @@ DESCRIPTION
 local _, ns = ...
 local cargBags = ns.cargBags
 
+local function bankBags(bankType, firstBag)
+	local bags = {}
+	for i = 0, C_Bank.FetchMaxNumBankTabs(bankType) - 1 do
+		bags[#bags + 1] = firstBag + i
+	end
+	return bags
+end
+
+local characterBank = bankBags(Enum.BankType.Character, Enum.BagIndex.CharacterBankTab_1)
+local accountBank = bankBags(Enum.BankType.Account, Enum.BagIndex.AccountBankTab_1)
 local bagStrings = {
 	["backpack"]		= { 0 },
 	["bags"]			= { 1, 2, 3, 4, 5 },
 	["backpack+bags"]	= { 0, 1, 2, 3, 4, 5 },
-	["bankframe"]		= { -1 },
-	["bankframe+bank"]	= { -1, 6, 7, 8, 9, 10, 11, 12 },
-	["bankreagent"]		= { -3 },
-	["bank"]			= { 6, 7, 8, 9, 10, 11, 12 },
-	["keyring"]			= { -2 },
-	["accountbank"]		= { 13, 14, 15, 16, 17 },
+	["bankframe"]		= { Enum.BagIndex.Characterbanktab },
+	["bankframe+bank"]	= characterBank,
+	["bank"]			= characterBank,
+	["keyring"]			= { Enum.BagIndex.Keyring },
+	["accountbank"]		= accountBank,
 }
 cargBags.BagStrings = bagStrings
 

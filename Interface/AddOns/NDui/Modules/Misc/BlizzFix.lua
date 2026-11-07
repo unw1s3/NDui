@@ -6,9 +6,11 @@ local M = B:GetModule("Misc")
 if PlayerTalentFrame then
 	PlayerTalentFrame:UnregisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
 else
-	hooksecurefunc("TalentFrame_LoadUI", function()
-		PlayerTalentFrame:UnregisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
-	end)
+	if TalentFrame_LoadUI then
+		hooksecurefunc("TalentFrame_LoadUI", function()
+			PlayerTalentFrame:UnregisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+		end)
+	end
 end
 
 -- Fix blizz bug in addon list
@@ -24,12 +26,6 @@ do
 	local done
 	local function setupMisc(event, addon)
 		if event == "ADDON_LOADED" and addon == "Blizzard_Collections" then
-			-- Fix undragable issue
-			local checkBox = WardrobeTransmogFrame.ToggleSecondaryAppearanceCheckbox
-			checkBox.Label:ClearAllPoints()
-			checkBox.Label:SetPoint("LEFT", checkBox, "RIGHT", 2, 1)
-			checkBox.Label:SetWidth(152)
-
 			CollectionsJournal:HookScript("OnShow", function()
 				if not done then
 					if InCombatLockdown() then
@@ -111,42 +107,17 @@ function M:HandleNDuiTitle()
 		end
 	end
 
-	if DB.isNewPatch then
-		hooksecurefunc("AddonList_InitAddon", function(entry)
-			if not entry.logoHooked then
-				replaceIconString(entry.Title)
-				hooksecurefunc(entry.Title, "SetText", replaceIconString)
-	
-				entry.logoHooked = true
-			end
-		end)
-	else
-		hooksecurefunc("AddonList_InitButton", function(entry)
-			if not entry.logoHooked then
-				replaceIconString(entry.Title)
-				hooksecurefunc(entry.Title, "SetText", replaceIconString)
-	
-				entry.logoHooked = true
-			end
-		end)
-	end
+	hooksecurefunc("AddonList_InitAddon", function(entry)
+		if not entry.logoHooked then
+			replaceIconString(entry.Title)
+			hooksecurefunc(entry.Title, "SetText", replaceIconString)
+
+			entry.logoHooked = true
+		end
+	end)
 end
 
--- Fix guild news jam
-do
-	local lastTime, timeGap = 0, 1.5
-	local function updateGuildNews(self, event)
-		if event == "PLAYER_ENTERING_WORLD" then
-			QueryGuildNews()
-		else
-			if self:IsVisible() then
-				local nowTime = GetTime()
-				if nowTime - lastTime > timeGap then
-					CommunitiesGuildNews_Update(self)
-					lastTime = nowTime
-				end
-			end
-		end
-	end
-	CommunitiesFrameGuildDetailsFrameNews:SetScript("OnEvent", updateGuildNews)
+-- fix money tooltip
+function SetTooltipMoney(frame, money, _, prefixText, suffixText)
+	frame:AddLine((prefixText or "").." "..GetCoinTextureString(money).." "..(suffixText or ""), 1,1,1)
 end

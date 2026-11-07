@@ -7,10 +7,6 @@ local B, C, L, DB = unpack(ns)
 local cargBags = ns.cargBags
 local Implementation = cargBags.classes.Implementation
 
-local AccountBankPanel = AccountBankPanel
-local BANK_TAB1 = Enum.BagIndex.AccountBankTab_1 or 13
-local ACCOUNT_BANK_TYPE = Enum.BankType.Account or 2
-
 function Implementation:GetBagTabClass()
 	return self:GetClass("BagTab", true, "BagTab")
 end
@@ -19,6 +15,10 @@ local BagTab = cargBags:NewClass("BagTab", nil, "Button")
 
 -- Default attributes
 BagTab.bgTex = QUESTION_MARK_ICON
+
+local function getBankBagID(button)
+	return button.bagId >= Enum.BagIndex.AccountBankTab_1 and Enum.BagIndex.Accountbanktab or Enum.BagIndex.Characterbanktab
+end
 
 local function AddBankTabSettingsToTooltip(tooltip, depositFlags)
 	if not tooltip or not depositFlags then return end
@@ -36,34 +36,33 @@ local function AddBankTabSettingsToTooltip(tooltip, depositFlags)
 end
 
 local function UpdateTooltip(self, id)
-	local data = AccountBankPanel.purchasedBankTabData[id]
+	if not BankFrame.BankPanel.purchasedBankTabData then return end
+	local data = BankFrame.BankPanel.purchasedBankTabData[id]
+	if not data then return end
 
 	GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-	if not data then
-		GameTooltip:AddLine(L["PurchaseTabTip"], 1,0,0, 1)
-	else
-		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip_SetTitle(GameTooltip, data.name, NORMAL_FONT_COLOR)
-		AddBankTabSettingsToTooltip(GameTooltip, data.depositFlags)
-		GameTooltip_AddInstructionLine(GameTooltip, BANK_TAB_TOOLTIP_CLICK_INSTRUCTION)
+	if self:GetID() > 1 and GameTooltip:SetBagItem(getBankBagID(self), self:GetID()) then
+		GameTooltip:Show()
+		return
 	end
+	GameTooltip_SetTitle(GameTooltip, data.name, NORMAL_FONT_COLOR)
+	AddBankTabSettingsToTooltip(GameTooltip, data.depositFlags)
+	GameTooltip_AddInstructionLine(GameTooltip, BANK_TAB_TOOLTIP_CLICK_INSTRUCTION)
 	GameTooltip:Show()
 end
 
-local buttonNum = 0
-function BagTab:Create(bagID)
-	buttonNum = buttonNum + 1
-	local name = addon.."BagTab"..buttonNum
+function BagTab:Create(bagID, i)
+	local name = addon.."BagTab_ID"..bagID
 	local button = setmetatable(CreateFrame("Button", name, nil, "BackdropTemplate"), self.__index)
-	button:SetID(buttonNum)
-	button.bagId = buttonNum + BANK_TAB1 - 1
+	button.bagId = bagID
+	button:SetID(i)
 
 	B.PixelIcon(button, BagTab.bgTex, true)
 	button:RegisterForDrag("LeftButton", "RightButton")
 	button:RegisterForClicks("AnyUp")
 	button:SetSize(37, 37)
 
-	cargBags.SetScriptHandlers(button, "OnClick", "OnEnter", "OnLeave")
+	cargBags.SetScriptHandlers(button, "OnClick", "OnEnter", "OnLeave", "OnDragStart", "OnReceiveDrag")
 
 	if(button.OnCreate) then button:OnCreate(bagID) end
 
@@ -118,12 +117,11 @@ function BagTab:UpdateButton()
 		if(self.bar.isGlobal) then
 			for _, container in pairs(container.implementation.contByID) do
 				container:SetFilter(self.filter, self.hidden)
-				container.implementation:OnEvent("BAG_UPDATE", self.bagId)
 			end
 		else
 			container:SetFilter(self.filter, self.hidden)
-			container.implementation:OnEvent("BAG_UPDATE", self.bagId)
 		end
+		container.implementation:OnEvent("BAG_UPDATE", self.bagId)
 	end
 
 	if self.hidden then
@@ -133,25 +131,38 @@ function BagTab:UpdateButton()
 	end
 end
 
-function BagTab:OnClick(btn)
-	local currentTabID = self:GetID()
+function BagTab:PickupBag()
+	local data = BankFrame.BankPanel.purchasedBankTabData
+	if self:GetID() == 1 or not data or not data[self:GetID()] then return end
+	if InCombatLockdown() then UIErrorsFrame:AddMessage(DB.InfoColor..ERR_NOT_IN_COMBAT) return end
+	C_Container.PickupContainerItem(getBankBagID(self), self:GetID())
+end
+BagTab.OnDragStart = BagTab.PickupBag
+BagTab.OnReceiveDrag = BagTab.PickupBag
 
-	local data = AccountBankPanel.purchasedBankTabData[currentTabID]
-	if not data then
-		--StaticPopup_Show("CONFIRM_BUY_BANK_TAB", nil, nil, {bankType = ACCOUNT_BANK_TYPE})
-	else
-		if btn == "LeftButton" then
+function BagTab:OnClick(btn)
+	if not BankFrame.BankPanel.purchasedBankTabData then return end
+
+	local currentTabID = self:GetID()
+	local data = BankFrame.BankPanel.purchasedBankTabData[currentTabID]
+	if not data then return end
+
+	if btn == "LeftButton" then
+		if CursorHasItem() or IsModifiedClick("PICKUPITEM") then
+			self:PickupBag()
+		else
 			self.bar.buttons[currentTabID]:UpdateButton()
-		else -- right button
-			local menu = AccountBankPanel.TabSettingsMenu
-			if menu then
-				if menu:IsShown() then menu:Hide() end
-				menu:SetParent(UIParent)
-				menu:ClearAllPoints()
-				menu:SetPoint("CENTER", 0, 100)
-				menu:EnableMouse(true)
-				menu:TriggerEvent(BankPanelTabSettingsMenuMixin.Event.OpenTabSettingsRequested, self.bagId)
-			end
+		end
+	else -- right button
+		local menu = BankFrame.BankPanel.TabSettingsMenu
+		if menu then
+			if menu:IsShown() then menu:Hide() end
+			menu:SetParent(UIParent)
+			menu:ClearAllPoints()
+			menu:SetPoint("CENTER", 0, 100)
+			menu:EnableMouse(true)
+			menu:SetFrameStrata("DIALOG")
+			menu:TriggerEvent(BankPanelTabSettingsMenuMixin.Event.OpenTabSettingsRequested, self.bagId)
 		end
 	end
 end
@@ -163,6 +174,8 @@ local function updater(self)
 end
 
 -- Register the plugin
+local hooked
+
 cargBags:RegisterPlugin("BagTab", function(self, bags)
 	if(cargBags.ParseBags) then
 		bags = cargBags:ParseBags(bags)
@@ -177,18 +190,28 @@ cargBags:RegisterPlugin("BagTab", function(self, bags)
 	local buttonClass = self.implementation:GetBagTabClass()
 	bar.buttons = {}
 	for i = 1, #bags do
-		local button = buttonClass:Create(bags[i])
+		local button = buttonClass:Create(bags[i], i)
 		button:SetParent(bar)
 		button.hidden = true
 		button.bar = bar
-		table.insert(bar.buttons, button)
+		bar.buttons[i] = button
 	end
 
-	hooksecurefunc(AccountBankPanel, "RefreshBankTabs", function(self)
-		for index, data in pairs(self.purchasedBankTabData) do
-			bar.buttons[index].Icon:SetTexture(data.icon)
-		end
-	end)
+	if not hooked then
+		hooked = true
+
+		hooksecurefunc(BankFrame.BankPanel, "RefreshBankTabs", function(self)
+			if not self.purchasedBankTabData then return end
+
+			for slotID, data in ipairs(self.purchasedBankTabData) do
+				if _G["NDuiBagTab_ID"..data.ID] then
+					local invID = C_Bank.BankBagTypeAndIDToInvSlot(self.bankType, slotID) + 1
+					local icon = slotID > 1 and GetInventoryItemTexture("player", invID)
+					_G["NDuiBagTab_ID"..data.ID].Icon:SetTexture(icon or data.icon or BagTab.bgTex)
+				end
+			end
+		end)
+	end
 
 	updater(bar)
 

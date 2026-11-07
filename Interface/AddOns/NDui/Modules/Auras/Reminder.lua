@@ -4,7 +4,7 @@ local A = B:GetModule("Auras")
 
 local pairs, tinsert, next = pairs, table.insert, next
 local GetZonePVPInfo = C_PvP and C_PvP.GetZonePVPInfo or GetZonePVPInfo
-local GetSpecialization = GetSpecialization
+local GetSpecialization = C_SpecializationInfo.GetSpecialization
 local UnitIsDeadOrGhost, UnitInVehicle, InCombatLockdown = UnitIsDeadOrGhost, UnitInVehicle, InCombatLockdown
 local IsInInstance, IsPlayerSpell = IsInInstance, IsPlayerSpell
 local GetWeaponEnchantInfo, IsEquippedItem = GetWeaponEnchantInfo, IsEquippedItem
@@ -49,17 +49,11 @@ function A:Reminder_Update(cfg)
 		if weaponIndex then
 			local hasMainHandEnchant, _, _, _, hasOffHandEnchant = GetWeaponEnchantInfo()
 			if (hasMainHandEnchant and weaponIndex == 1) or (hasOffHandEnchant and weaponIndex == 2) then
-				frame:Hide()
 				return
 			end
 		else
-			for i = 1, 40 do
-				local auraData = C_UnitAuras.GetBuffDataByIndex("player", i, "HELPFUL")
-				if not auraData then break end
-				if auraData.spellId and cfg.spells[auraData.spellId] then
-					frame:Hide()
-					return
-				end
+			for spellID in pairs(cfg.spells) do
+				if C_UnitAuras.GetPlayerAuraBySpellID(spellID) then return end
 			end
 		end
 		frame:Show()
